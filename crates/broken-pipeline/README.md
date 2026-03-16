@@ -1,6 +1,6 @@
-# broken-pipeline-core
+# broken-pipeline
 
-`broken-pipeline-core` is the Rust port of the Broken Pipeline core protocol.
+`broken-pipeline` is the Rust port of the Broken Pipeline core protocol.
 It preserves the C++ layering around:
 
 - task/task-group scheduling contracts
@@ -9,7 +9,7 @@ It preserves the C++ layering around:
 - the reference `PipeExec` runtime
 
 The crate remains traits-oriented like the C++ core, and it now ships a first-class
-Arrow binding in `broken_pipeline_core::traits::arrow` for `RecordBatch`-based
+Arrow binding in `broken_pipeline::traits::arrow` for `RecordBatch`-based
 integrations.
 
 ## Key modules
@@ -25,6 +25,6 @@ integrations.
 ## Commands
 
 ```bash
-cargo test -p broken-pipeline-core
+cargo test -p broken-pipeline
 cargo fmt --all
 ```

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use arrow_array::{ArrayRef, Int32Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema};
 
-use broken_pipeline_core::traits::arrow::Batch;
-use broken_pipeline_core::OpOutput;
+use broken_pipeline::traits::arrow::Batch;
+use broken_pipeline::OpOutput;
 
 #[test]
 fn arrow_traits_binding_supports_record_batches() {

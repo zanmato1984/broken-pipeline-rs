@@ -2,7 +2,7 @@ mod support;
 
 use std::sync::Arc;
 
-use broken_pipeline_core::{compile, Pipeline, PipelineChannel};
+use broken_pipeline::{compile, Pipeline, PipelineChannel};
 
 use support::{
     shared_pipe, shared_sink, shared_source, trace_log, ScriptedPipe, ScriptedSink, ScriptedSource,

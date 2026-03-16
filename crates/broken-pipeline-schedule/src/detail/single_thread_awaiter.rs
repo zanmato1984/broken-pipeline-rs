@@ -2,7 +2,7 @@ use std::any::Any;
 use std::sync::{Arc, Condvar, Mutex};
 
 use arrow_schema::ArrowError;
-use broken_pipeline_core::{Awaiter, SharedResumer};
+use broken_pipeline::{Awaiter, SharedResumer};
 
 use super::SingleThreadResumer;
 

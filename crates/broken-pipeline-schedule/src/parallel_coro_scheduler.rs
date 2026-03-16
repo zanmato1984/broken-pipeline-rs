@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use broken_pipeline_core::SharedResumer;
+use broken_pipeline::SharedResumer;
 
 use crate::detail::{CoroAwaiter, CoroResumer};
 use crate::naive_parallel_scheduler::{
@@ -18,7 +18,7 @@ impl ParallelCoroScheduler {
             context,
             Arc::new(|| Ok(Arc::new(CoroResumer::default()) as SharedResumer)),
             Arc::new(|resumers| {
-                Ok(CoroAwaiter::new(1, resumers)? as Arc<dyn broken_pipeline_core::Awaiter>)
+                Ok(CoroAwaiter::new(1, resumers)? as Arc<dyn broken_pipeline::Awaiter>)
             }),
         )
     }

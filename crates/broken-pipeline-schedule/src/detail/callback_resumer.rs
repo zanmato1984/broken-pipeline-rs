@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::sync::Mutex;
 
-use broken_pipeline_core::Resumer;
+use broken_pipeline::Resumer;
 
 type Callback = Box<dyn Fn() + Send + Sync + 'static>;
 

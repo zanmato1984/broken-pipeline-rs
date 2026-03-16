@@ -1,5 +1,5 @@
 [package]
-name = "broken-pipeline-core"
+name = "broken-pipeline"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
@@ -7,7 +7,7 @@ description = "Rust core implementation for Broken Pipeline"
 publish = false
 
 [lib]
-name = "broken_pipeline_core"
+name = "broken_pipeline"
 path = "src/lib.rs"
 
 [dependencies]

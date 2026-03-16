@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use broken_pipeline_core::{
+use broken_pipeline::{
     Awaiter, OpOutput, PipeOperator, PipelineTypes, Resumer, SharedAwaiter, SharedResumer,
     SinkOperator, SourceOperator, TaskContext, TaskGroup, ThreadId,
 };

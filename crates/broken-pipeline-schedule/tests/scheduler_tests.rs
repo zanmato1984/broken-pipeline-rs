@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use arrow_schema::ArrowError;
-use broken_pipeline_core::{Continuation, SharedResumer, Task, TaskHint, TaskHintType, TaskStatus};
+use broken_pipeline::{Continuation, SharedResumer, Task, TaskHint, TaskHintType, TaskStatus};
 use broken_pipeline_schedule::{
     AsyncDualPoolScheduler, NaiveParallelScheduler, ParallelCoroScheduler, SequentialCoroScheduler,
     TaskContext, TaskGroup,

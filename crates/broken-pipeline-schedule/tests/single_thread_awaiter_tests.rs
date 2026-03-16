@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use broken_pipeline_core::SharedResumer;
+use broken_pipeline::SharedResumer;
 use broken_pipeline_schedule::detail::{SingleThreadAwaiter, SingleThreadResumer};
 
 #[test]

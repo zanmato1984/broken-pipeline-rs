@@ -5,7 +5,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use arrow_schema::ArrowError;
-use broken_pipeline_core::{SharedAwaiter, SharedResumer};
+use broken_pipeline::{SharedAwaiter, SharedResumer};
 
 use crate::detail::{CallbackResumer, ConditionalAwaiter};
 use crate::traits::{Result, TaskContext, TaskGroup, TaskStatus};
@@ -42,7 +42,7 @@ impl NaiveParallelScheduler {
             context,
             Arc::new(|| Ok(Arc::new(CallbackResumer::default()) as SharedResumer)),
             Arc::new(|resumers| {
-                Ok(ConditionalAwaiter::new(1, resumers)? as Arc<dyn broken_pipeline_core::Awaiter>)
+                Ok(ConditionalAwaiter::new(1, resumers)? as Arc<dyn broken_pipeline::Awaiter>)
             }),
         )
     }
@@ -156,7 +156,7 @@ pub(crate) fn run_task_group(
 }
 
 fn run_continuation(
-    continuation: broken_pipeline_core::Continuation<crate::traits::Traits>,
+    continuation: broken_pipeline::Continuation<crate::traits::Traits>,
     task_ctx: TaskContext,
     awaiter_ready: AwaiterReadyFn,
     statuses: Arc<Mutex<Vec<TaskStatus>>>,

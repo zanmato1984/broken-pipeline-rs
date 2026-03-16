@@ -1,7 +1,7 @@
 [workspace]
 members = [
-  "crates/broken-pipeline-core",
+  "crates/broken-pipeline",
   "crates/broken-pipeline-schedule",
-  "crates/broken-pipeline-capi",
+  "crates/broken-pipeline-c",
 ]
 resolver = "2"

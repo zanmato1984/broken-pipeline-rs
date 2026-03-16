@@ -2,11 +2,12 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+build_dir="$repo_root/target/c-tests"
 
-cargo build -p broken-pipeline-capi
-cmake -S "$repo_root/crates/broken-pipeline-capi/tests/c" \
-  -B "$repo_root/target/c-api-tests" \
-  -DBROKEN_PIPELINE_CAPI_LIB="$repo_root/target/debug/libbroken_pipeline_capi.so" \
-  -DBROKEN_PIPELINE_CAPI_INCLUDE_DIR="$repo_root/crates/broken-pipeline-capi/include"
-cmake --build "$repo_root/target/c-api-tests"
-ctest --test-dir "$repo_root/target/c-api-tests" --output-on-failure
+cargo build -p broken-pipeline-c
+cmake -S "$repo_root/crates/broken-pipeline-c/tests/c" \
+  -B "$build_dir" \
+  -DBROKEN_PIPELINE_C_LIB="$repo_root/target/debug/libbroken_pipeline_c.so" \
+  -DBROKEN_PIPELINE_C_INCLUDE_DIR="$repo_root/crates/broken-pipeline-c/include"
+cmake --build "$build_dir"
+ctest --test-dir "$build_dir" --output-on-failure

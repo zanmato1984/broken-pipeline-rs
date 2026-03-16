@@ -2,7 +2,7 @@ mod support;
 
 use std::sync::Arc;
 
-use broken_pipeline_core::{
+use broken_pipeline::{
     Continuation, SharedAwaiter, SharedResumer, Task, TaskContext, TaskGroup, TaskHintType,
     TaskStatus,
 };
@@ -11,7 +11,7 @@ use support::{test_context, RecordedAwaiter, TestResumer, TestTypes};
 
 struct NoopAwaiter;
 
-impl broken_pipeline_core::Awaiter for NoopAwaiter {
+impl broken_pipeline::Awaiter for NoopAwaiter {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

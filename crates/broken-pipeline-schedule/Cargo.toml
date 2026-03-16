@@ -12,4 +12,4 @@ path = "src/lib.rs"
 
 [dependencies]
 arrow-schema = "50.0.0"
-broken-pipeline-core = { path = "../broken-pipeline-core" }
+broken-pipeline = { path = "../broken-pipeline" }

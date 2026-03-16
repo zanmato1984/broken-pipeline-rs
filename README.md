@@ -3,34 +3,34 @@
 `broken-pipeline-rs` is a native Rust port of the C++ Broken Pipeline project.
 It keeps the same conceptual layering:
 
-- `broken-pipeline-core`: the core task/operator/pipeline protocol and `PipeExec`
+- `broken-pipeline`: the core task/operator/pipeline protocol and `PipeExec`
 - `broken-pipeline-schedule`: an optional Arrow-bound schedule layer with ready-made schedulers
-- `broken-pipeline-capi`: a focused C API for task-group interop
+- `broken-pipeline-c`: a focused C API for task-group interop
 
 ## Workspace layout
 
-- `crates/broken-pipeline-core`
+- `crates/broken-pipeline`
   - generic core protocol modeled after the C++ headers
   - pipeline compilation with implicit-source stage splitting
   - `PipeExec` reference runtime
-  - Arrow binding under `broken_pipeline_core::traits::arrow`
+  - Arrow binding under `broken_pipeline::traits::arrow`
 - `crates/broken-pipeline-schedule`
   - re-exports Arrow-bound aliases like the C++ `schedule/traits.h`
   - detail awaiters/resumers (`callback`, `conditional`, `future`, `coro`, `single-thread`)
   - scheduler front-ends: `NaiveParallelScheduler`, `AsyncDualPoolScheduler`,
     `ParallelCoroScheduler`, and `SequentialCoroScheduler`
-- `crates/broken-pipeline-capi`
+- `crates/broken-pipeline-c`
   - C ABI for running task groups through the Rust schedulers
-  - public header in `crates/broken-pipeline-capi/include/broken_pipeline_rs.h`
-  - standalone C smoke tests in `crates/broken-pipeline-capi/tests/c`
+  - public header in `crates/broken-pipeline-c/include/broken_pipeline_c.h`
+  - standalone C smoke tests in `crates/broken-pipeline-c/tests/c`
 
 ## Arrow-bound design
 
 Like the C++ tree, the Rust port keeps the core protocol traits-oriented while shipping
 an explicit Arrow binding. The primary Arrow binding lives in:
 
-- `broken_pipeline_core::traits::arrow::ArrowTypes`
-- `broken_pipeline_core::traits::arrow::Batch`
+- `broken_pipeline::traits::arrow::ArrowTypes`
+- `broken_pipeline::traits::arrow::Batch`
 - `broken_pipeline_schedule::Traits`
 
 This keeps the protocol reusable while making Arrow `RecordBatch` the first-class bound

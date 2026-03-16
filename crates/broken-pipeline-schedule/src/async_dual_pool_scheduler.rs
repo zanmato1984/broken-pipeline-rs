@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use broken_pipeline_core::SharedResumer;
+use broken_pipeline::SharedResumer;
 
 use crate::detail::{CallbackResumer, FutureAwaiter};
 use crate::naive_parallel_scheduler::{
@@ -43,7 +43,7 @@ impl AsyncDualPoolScheduler {
             context,
             Arc::new(|| Ok(Arc::new(CallbackResumer::default()) as SharedResumer)),
             Arc::new(|resumers| {
-                Ok(FutureAwaiter::new(1, resumers)? as Arc<dyn broken_pipeline_core::Awaiter>)
+                Ok(FutureAwaiter::new(1, resumers)? as Arc<dyn broken_pipeline::Awaiter>)
             }),
         )
     }

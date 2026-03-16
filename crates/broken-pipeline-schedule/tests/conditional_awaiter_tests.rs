@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use broken_pipeline_core::{Resumer, SharedResumer};
+use broken_pipeline::{Resumer, SharedResumer};
 use broken_pipeline_schedule::detail::{CallbackResumer, ConditionalAwaiter};
 
 #[test]

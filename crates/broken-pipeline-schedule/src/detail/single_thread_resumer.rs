@@ -1,6 +1,6 @@
 use std::any::Any;
 
-use broken_pipeline_core::Resumer;
+use broken_pipeline::Resumer;
 
 use super::CallbackResumer;
 

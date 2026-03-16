@@ -1,5 +1,11 @@
 #![allow(non_camel_case_types)]
 
+//! Rust-port-specific task-group C API for Broken Pipeline.
+//!
+//! The canonical generic ABI draft is vendored under
+//! `third_party/broken-pipeline-abi/`. This crate intentionally exposes a smaller
+//! surface for driving Rust schedulers and does not claim full coverage of that draft.
+
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr;
 

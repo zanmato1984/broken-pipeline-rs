@@ -3,7 +3,8 @@ name = "broken-pipeline-c"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "C API for the Rust Broken Pipeline port"
+description = "Rust-port-specific task-group C API for Broken Pipeline"
+readme = "README.md"
 publish = false
 
 [lib]

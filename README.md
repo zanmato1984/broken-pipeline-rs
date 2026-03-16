@@ -5,7 +5,8 @@ It keeps the same conceptual layering:
 
 - `broken-pipeline`: the core task/operator/pipeline protocol and `PipeExec`
 - `broken-pipeline-schedule`: an optional Arrow-bound schedule layer with ready-made schedulers
-- `broken-pipeline-c`: a focused C API for task-group interop
+- `broken-pipeline-c`: the Rust port's current C ABI implementation crate
+- `third_party/broken-pipeline-abi`: a pinned vendored snapshot of the shared generic ABI/protocol repo
 
 ## Workspace layout
 
@@ -20,9 +21,22 @@ It keeps the same conceptual layering:
   - scheduler front-ends: `NaiveParallelScheduler`, `AsyncDualPoolScheduler`,
     `ParallelCoroScheduler`, and `SequentialCoroScheduler`
 - `crates/broken-pipeline-c`
-  - C ABI for running task groups through the Rust schedulers
+  - Rust implementation crate for the port's current C ABI surface
   - public header in `crates/broken-pipeline-c/include/broken_pipeline_c.h`
   - standalone C smoke tests in `crates/broken-pipeline-c/tests/c`
+- `third_party/broken-pipeline-abi`
+  - pinned vendored snapshot of the generic ABI/protocol source-of-truth repository
+  - duplicated in-tree on purpose rather than synced by script
+
+## Vendored ABI snapshot
+
+This repository carries a pinned hard copy of `broken-pipeline-abi` under
+`third_party/broken-pipeline-abi/`, currently vendored from commit
+`8f3b133e057d41fecc77ae9c31d25e36529008f5`.
+
+`broken-pipeline-abi` remains the source-of-truth for the generic Broken Pipeline ABI
+and protocol documentation. This repository intentionally carries a hard-duplicated
+snapshot instead of an update script, so refreshes are manual and reviewable.
 
 ## Arrow-bound design
 
@@ -64,5 +78,9 @@ clippy, Rust test, and C API test checks on pushes and pull requests.
 - The schedule layer is kept separate from the core crate, mirroring the C++ repository.
 - The Rust scheduler implementations focus on preserving protocol/runtime behavior rather
   than reproducing Folly or C++ coroutine internals literally.
-- The C API currently targets task-group interop, which is the cleanest stable surface
-  for non-Rust hosts.
+- `third_party/broken-pipeline-abi/` is a pinned local snapshot of the canonical
+  `broken-pipeline-abi` repository at commit `8f3b133e057d41fecc77ae9c31d25e36529008f5`.
+  It documents the intended generic host/provider ABI.
+- The current `broken-pipeline-c` crate is still narrower than that generic draft: it is a
+  Rust-port implementation surface for task-group-oriented interop, not yet a full generic
+  ABI implementation.

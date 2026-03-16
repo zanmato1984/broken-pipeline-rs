@@ -1,6 +1,14 @@
 #ifndef BROKEN_PIPELINE_C_H
 #define BROKEN_PIPELINE_C_H
 
+/*
+ * This header describes the Rust port's current exported C ABI surface.
+ *
+ * The generic, implementation-neutral ABI/protocol draft is vendored separately under
+ * `third_party/broken-pipeline-abi/` at the repository root. This header is intentionally
+ * narrower today and should not be treated as the canonical shared ABI for all ports.
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 

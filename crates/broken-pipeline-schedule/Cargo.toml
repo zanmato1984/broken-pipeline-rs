@@ -1,0 +1,15 @@
+[package]
+name = "broken-pipeline-schedule"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Optional Arrow-bound schedule layer for Broken Pipeline"
+publish = false
+
+[lib]
+name = "broken_pipeline_schedule"
+path = "src/lib.rs"
+
+[dependencies]
+arrow-schema = "50.0.0"
+broken-pipeline-core = { path = "../broken-pipeline-core" }

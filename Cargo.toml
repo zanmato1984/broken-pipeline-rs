@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "crates/broken-pipeline-core",
+  "crates/broken-pipeline-schedule",
+  "crates/broken-pipeline-capi",
+]
+resolver = "2"

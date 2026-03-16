@@ -1,0 +1,17 @@
+[package]
+name = "broken-pipeline-capi"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "C API for the Rust Broken Pipeline port"
+publish = false
+
+[lib]
+name = "broken_pipeline_capi"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+arrow-schema = "50.0.0"
+broken-pipeline-core = { path = "../broken-pipeline-core" }
+broken-pipeline-schedule = { path = "../broken-pipeline-schedule" }

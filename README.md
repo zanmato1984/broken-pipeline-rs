@@ -47,6 +47,9 @@ cargo test --workspace
 ./scripts/test-c-api.sh
 ```
 
+The repository also ships a GitHub Actions workflow that runs the same formatting,
+clippy, Rust test, and C API test checks on pushes and pull requests.
+
 ## Ported functionality
 
 - task, continuation, task-group, resumer, and awaiter contracts

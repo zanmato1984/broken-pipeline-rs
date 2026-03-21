@@ -118,7 +118,7 @@ unsafe fn run_with_naive(
 ) -> bp_c_run_result {
     match build_group(task, num_tasks, continuation) {
         Ok(group) => {
-            let scheduler = NaiveParallelScheduler;
+            let scheduler = NaiveParallelScheduler::default();
             let handle = scheduler.schedule_task_group(group, scheduler.make_task_context(None));
             to_run_result(scheduler.wait_task_group(handle))
         }
@@ -133,7 +133,7 @@ unsafe fn run_with_sequential(
 ) -> bp_c_run_result {
     match build_group(task, num_tasks, continuation) {
         Ok(group) => {
-            let scheduler = SequentialCoroScheduler;
+            let scheduler = SequentialCoroScheduler::default();
             let handle = scheduler.schedule_task_group(group, scheduler.make_task_context(None));
             to_run_result(scheduler.wait_task_group(handle))
         }

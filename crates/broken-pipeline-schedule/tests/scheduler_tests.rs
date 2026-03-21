@@ -4,10 +4,12 @@ use std::thread;
 use std::time::Duration;
 
 use arrow_schema::ArrowError;
-use broken_pipeline::{Continuation, SharedResumer, Task, TaskHint, TaskHintType, TaskStatus};
+use broken_pipeline::{
+    Continuation, PipelineTypes, SharedResumer, Task, TaskHint, TaskHintType, TaskStatus,
+};
 use broken_pipeline_schedule::{
-    AsyncDualPoolScheduler, NaiveParallelScheduler, ParallelCoroScheduler, SequentialCoroScheduler,
-    TaskContext, TaskGroup,
+    AsyncDualPoolScheduler, NaiveParallelScheduler, ParallelCoroScheduler, ScheduleError,
+    ScheduleTypes, SequentialCoroScheduler, TaskContext, TaskGroup,
 };
 
 trait SchedulerLike: Default + Send + Sync + 'static {
@@ -238,3 +240,45 @@ scheduler_suite!(naive_parallel, NaiveParallelScheduler);
 scheduler_suite!(async_dual_pool, AsyncDualPoolScheduler);
 scheduler_suite!(parallel_coro, ParallelCoroScheduler);
 scheduler_suite!(sequential_coro, SequentialCoroScheduler);
+
+struct TestScheduleTypes;
+
+impl PipelineTypes for TestScheduleTypes {
+    type Batch = i32;
+    type Error = String;
+}
+
+impl ScheduleTypes for TestScheduleTypes {
+    fn from_schedule_error(error: ScheduleError) -> Self::Error {
+        error.to_string()
+    }
+}
+
+#[test]
+fn custom_pipeline_types_can_use_sequential_scheduler_for_tests() {
+    let scheduler = SequentialCoroScheduler::<TestScheduleTypes>::default();
+    let ctx = scheduler.make_task_context(None);
+    let awaiter_error = match ctx.make_awaiter(Vec::new()) {
+        Ok(_) => panic!("empty resumers should surface a scheduler-local error"),
+        Err(error) => error,
+    };
+    assert!(awaiter_error.contains("SingleThreadAwaiter: empty resumers"));
+
+    let first_step = Arc::new(AtomicBool::new(false));
+    let first_step_clone = Arc::clone(&first_step);
+    let task = Task::new("GenericTestTask", move |ctx, _| {
+        if !first_step_clone.swap(true, Ordering::SeqCst) {
+            let resumer = ctx.make_resumer()?;
+            let awaiter = ctx.make_awaiter(vec![Arc::clone(&resumer)])?;
+            resumer.resume();
+            return Ok(TaskStatus::Blocked(awaiter));
+        }
+        Ok(TaskStatus::Finished)
+    });
+    let group = broken_pipeline::TaskGroup::new("GenericScheduleTest", task, 1);
+
+    let result = scheduler
+        .wait_task_group(scheduler.schedule_task_group(group, ctx))
+        .expect("custom pipeline types should run through the scheduler");
+    assert!(result.is_finished());
+}

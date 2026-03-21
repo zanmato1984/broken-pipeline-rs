@@ -1,33 +1,64 @@
 use std::any::Any;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
-use broken_pipeline::SharedResumer;
+use broken_pipeline::{BpResult, SharedResumer, TaskContext, TaskGroup, TaskStatus};
 
 use crate::detail::{CoroAwaiter, CoroResumer};
 use crate::naive_parallel_scheduler::{
     run_task_group, wait_coro_ready, wait_handle, TaskGroupHandle,
 };
-use crate::traits::{TaskContext, TaskGroup};
+use crate::traits::{ScheduleTypes, Traits};
 
-#[derive(Clone, Default)]
-pub struct ParallelCoroScheduler;
+#[derive(Clone)]
+pub struct ParallelCoroScheduler<T: ScheduleTypes = Traits>
+where
+    T::Error: Send + 'static,
+{
+    _marker: PhantomData<fn() -> T>,
+}
 
-impl ParallelCoroScheduler {
-    pub fn make_task_context(&self, context: Option<Arc<dyn Any + Send + Sync>>) -> TaskContext {
+impl<T: ScheduleTypes> Default for ParallelCoroScheduler<T>
+where
+    T::Error: Send + 'static,
+{
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: ScheduleTypes> ParallelCoroScheduler<T>
+where
+    T::Error: Send + 'static,
+{
+    pub fn make_task_context(&self, context: Option<Arc<dyn Any + Send + Sync>>) -> TaskContext<T> {
         TaskContext::new(
             context,
             Arc::new(|| Ok(Arc::new(CoroResumer::default()) as SharedResumer)),
             Arc::new(|resumers| {
-                Ok(CoroAwaiter::new(1, resumers)? as Arc<dyn broken_pipeline::Awaiter>)
+                CoroAwaiter::new(1, resumers)
+                    .map(|awaiter| awaiter as Arc<dyn broken_pipeline::Awaiter>)
+                    .map_err(T::from_schedule_error)
             }),
         )
     }
 
-    pub fn schedule_task_group(&self, group: TaskGroup, task_ctx: TaskContext) -> TaskGroupHandle {
+    pub fn schedule_task_group(
+        &self,
+        group: TaskGroup<T>,
+        task_ctx: TaskContext<T>,
+    ) -> TaskGroupHandle<T> {
         let statuses = Arc::new(std::sync::Mutex::new(Vec::new()));
         let statuses_clone = Arc::clone(&statuses);
         let join_handle = std::thread::spawn(move || {
-            run_task_group(group, task_ctx, Arc::new(wait_coro_ready), statuses_clone)
+            run_task_group(
+                group,
+                task_ctx,
+                Arc::new(wait_coro_ready::<T>),
+                statuses_clone,
+            )
         });
         TaskGroupHandle {
             join_handle: Some(join_handle),
@@ -35,10 +66,7 @@ impl ParallelCoroScheduler {
         }
     }
 
-    pub fn wait_task_group(
-        &self,
-        handle: TaskGroupHandle,
-    ) -> crate::traits::Result<crate::traits::TaskStatus> {
+    pub fn wait_task_group(&self, handle: TaskGroupHandle<T>) -> BpResult<TaskStatus, T> {
         wait_handle(handle)
     }
 }

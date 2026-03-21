@@ -1,21 +1,29 @@
 use std::any::Any;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use arrow_schema::ArrowError;
-use broken_pipeline::{SharedAwaiter, SharedResumer};
+use broken_pipeline::{
+    BpResult, Continuation, SharedAwaiter, SharedResumer, TaskContext, TaskGroup, TaskStatus,
+};
 
 use crate::detail::{CallbackResumer, ConditionalAwaiter};
-use crate::traits::{Result, TaskContext, TaskGroup, TaskStatus};
+use crate::traits::{ScheduleError, ScheduleTypes, Traits};
 
-pub struct TaskGroupHandle {
-    pub(crate) join_handle: Option<JoinHandle<Result<TaskStatus>>>,
+pub struct TaskGroupHandle<T: ScheduleTypes = Traits>
+where
+    T::Error: Send + 'static,
+{
+    pub(crate) join_handle: Option<JoinHandle<BpResult<TaskStatus, T>>>,
     pub(crate) statuses: Arc<Mutex<Vec<TaskStatus>>>,
 }
 
-impl TaskGroupHandle {
+impl<T: ScheduleTypes> TaskGroupHandle<T>
+where
+    T::Error: Send + 'static,
+{
     pub fn statuses(&self) -> Vec<TaskStatus> {
         self.statuses
             .lock()
@@ -24,37 +32,71 @@ impl TaskGroupHandle {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct NaiveParallelScheduler;
+#[derive(Clone)]
+pub struct NaiveParallelScheduler<T: ScheduleTypes = Traits>
+where
+    T::Error: Send + 'static,
+{
+    _marker: PhantomData<fn() -> T>,
+}
 
-pub(crate) fn wait_handle(mut handle: TaskGroupHandle) -> Result<TaskStatus> {
+impl<T: ScheduleTypes> Default for NaiveParallelScheduler<T>
+where
+    T::Error: Send + 'static,
+{
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+pub(crate) fn wait_handle<T: ScheduleTypes>(
+    mut handle: TaskGroupHandle<T>,
+) -> BpResult<TaskStatus, T>
+where
+    T::Error: Send + 'static,
+{
     handle
         .join_handle
         .take()
         .expect("task group handle already awaited")
         .join()
-        .expect("task group thread panicked")
+        .unwrap_or_else(|_| {
+            Err(T::from_schedule_error(
+                ScheduleError::TaskGroupThreadPanicked,
+            ))
+        })
 }
 
-impl NaiveParallelScheduler {
-    pub fn make_task_context(&self, context: Option<Arc<dyn Any + Send + Sync>>) -> TaskContext {
+impl<T: ScheduleTypes> NaiveParallelScheduler<T>
+where
+    T::Error: Send + 'static,
+{
+    pub fn make_task_context(&self, context: Option<Arc<dyn Any + Send + Sync>>) -> TaskContext<T> {
         TaskContext::new(
             context,
             Arc::new(|| Ok(Arc::new(CallbackResumer::default()) as SharedResumer)),
             Arc::new(|resumers| {
-                Ok(ConditionalAwaiter::new(1, resumers)? as Arc<dyn broken_pipeline::Awaiter>)
+                ConditionalAwaiter::new(1, resumers)
+                    .map(|awaiter| awaiter as Arc<dyn broken_pipeline::Awaiter>)
+                    .map_err(T::from_schedule_error)
             }),
         )
     }
 
-    pub fn schedule_task_group(&self, group: TaskGroup, task_ctx: TaskContext) -> TaskGroupHandle {
+    pub fn schedule_task_group(
+        &self,
+        group: TaskGroup<T>,
+        task_ctx: TaskContext<T>,
+    ) -> TaskGroupHandle<T> {
         let statuses = Arc::new(Mutex::new(Vec::new()));
         let statuses_clone = Arc::clone(&statuses);
         let join_handle = thread::spawn(move || {
             run_task_group(
                 group,
                 task_ctx,
-                Arc::new(wait_conditional_ready),
+                Arc::new(wait_conditional_ready::<T>),
                 statuses_clone,
             )
         });
@@ -64,20 +106,23 @@ impl NaiveParallelScheduler {
         }
     }
 
-    pub fn wait_task_group(&self, handle: TaskGroupHandle) -> Result<TaskStatus> {
+    pub fn wait_task_group(&self, handle: TaskGroupHandle<T>) -> BpResult<TaskStatus, T> {
         wait_handle(handle)
     }
 }
 
-pub(crate) type AwaiterReadyFn =
-    Arc<dyn Fn(&SharedAwaiter) -> Result<bool> + Send + Sync + 'static>;
+pub(crate) type AwaiterReadyFnFor<T> =
+    Arc<dyn Fn(&SharedAwaiter) -> BpResult<bool, T> + Send + Sync + 'static>;
 
-pub(crate) fn run_task_group(
-    group: TaskGroup,
-    task_ctx: TaskContext,
-    awaiter_ready: AwaiterReadyFn,
+pub(crate) fn run_task_group<T: ScheduleTypes>(
+    group: TaskGroup<T>,
+    task_ctx: TaskContext<T>,
+    awaiter_ready: AwaiterReadyFnFor<T>,
     statuses: Arc<Mutex<Vec<TaskStatus>>>,
-) -> Result<TaskStatus> {
+) -> BpResult<TaskStatus, T>
+where
+    T::Error: Send + 'static,
+{
     let task = group.task().clone();
     let mut blocked = vec![None; group.num_tasks()];
     let mut complete = vec![false; group.num_tasks()];
@@ -155,12 +200,15 @@ pub(crate) fn run_task_group(
     }
 }
 
-fn run_continuation(
-    continuation: broken_pipeline::Continuation<crate::traits::Traits>,
-    task_ctx: TaskContext,
-    awaiter_ready: AwaiterReadyFn,
+fn run_continuation<T: ScheduleTypes>(
+    continuation: Continuation<T>,
+    task_ctx: TaskContext<T>,
+    awaiter_ready: AwaiterReadyFnFor<T>,
     statuses: Arc<Mutex<Vec<TaskStatus>>>,
-) -> Result<TaskStatus> {
+) -> BpResult<TaskStatus, T>
+where
+    T::Error: Send + 'static,
+{
     let mut blocked = None;
 
     loop {
@@ -194,38 +242,55 @@ fn run_continuation(
     }
 }
 
-pub(crate) fn wait_conditional_ready(awaiter: &SharedAwaiter) -> Result<bool> {
+pub(crate) fn wait_conditional_ready<T: ScheduleTypes>(awaiter: &SharedAwaiter) -> BpResult<bool, T>
+where
+    T::Error: Send + 'static,
+{
     awaiter
         .as_any()
         .downcast_ref::<ConditionalAwaiter>()
         .map(|awaiter| awaiter.is_ready())
-        .ok_or_else(|| unexpected_awaiter("ConditionalAwaiter"))
+        .ok_or_else(|| unexpected_awaiter::<T>("ConditionalAwaiter"))
 }
 
-pub(crate) fn wait_future_ready(awaiter: &SharedAwaiter) -> Result<bool> {
+pub(crate) fn wait_future_ready<T: ScheduleTypes>(awaiter: &SharedAwaiter) -> BpResult<bool, T>
+where
+    T::Error: Send + 'static,
+{
     awaiter
         .as_any()
         .downcast_ref::<crate::detail::FutureAwaiter>()
         .map(|awaiter| awaiter.is_ready())
-        .ok_or_else(|| unexpected_awaiter("FutureAwaiter"))
+        .ok_or_else(|| unexpected_awaiter::<T>("FutureAwaiter"))
 }
 
-pub(crate) fn wait_coro_ready(awaiter: &SharedAwaiter) -> Result<bool> {
+pub(crate) fn wait_coro_ready<T: ScheduleTypes>(awaiter: &SharedAwaiter) -> BpResult<bool, T>
+where
+    T::Error: Send + 'static,
+{
     awaiter
         .as_any()
         .downcast_ref::<crate::detail::CoroAwaiter>()
         .map(|awaiter| awaiter.is_ready())
-        .ok_or_else(|| unexpected_awaiter("CoroAwaiter"))
+        .ok_or_else(|| unexpected_awaiter::<T>("CoroAwaiter"))
 }
 
-pub(crate) fn wait_single_thread_ready(awaiter: &SharedAwaiter) -> Result<bool> {
+pub(crate) fn wait_single_thread_ready<T: ScheduleTypes>(
+    awaiter: &SharedAwaiter,
+) -> BpResult<bool, T>
+where
+    T::Error: Send + 'static,
+{
     awaiter
         .as_any()
         .downcast_ref::<crate::detail::SingleThreadAwaiter>()
         .map(|awaiter| awaiter.is_ready())
-        .ok_or_else(|| unexpected_awaiter("SingleThreadAwaiter"))
+        .ok_or_else(|| unexpected_awaiter::<T>("SingleThreadAwaiter"))
 }
 
-fn unexpected_awaiter(expected: &str) -> ArrowError {
-    ArrowError::ComputeError(format!("unexpected awaiter type, expected {expected}"))
+fn unexpected_awaiter<T: ScheduleTypes>(expected: &'static str) -> T::Error
+where
+    T::Error: Send + 'static,
+{
+    T::from_schedule_error(ScheduleError::UnexpectedAwaiterType { expected })
 }

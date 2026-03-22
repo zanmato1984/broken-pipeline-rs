@@ -2,6 +2,5 @@
 members = [
   "crates/broken-pipeline",
   "crates/broken-pipeline-schedule",
-  "crates/broken-pipeline-c",
 ]
 resolver = "2"

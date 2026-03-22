@@ -23,14 +23,26 @@ pub type AwaiterFactory<T> =
 
 #[derive(Clone)]
 pub struct TaskContext<T: PipelineTypes> {
-    context: Option<Arc<dyn Any + Send + Sync>>,
+    context: Arc<T::Context>,
     resumer_factory: ResumerFactory<T>,
     awaiter_factory: AwaiterFactory<T>,
 }
 
 impl<T: PipelineTypes> TaskContext<T> {
     pub fn new(
-        context: Option<Arc<dyn Any + Send + Sync>>,
+        context: T::Context,
+        resumer_factory: ResumerFactory<T>,
+        awaiter_factory: AwaiterFactory<T>,
+    ) -> Self {
+        Self {
+            context: Arc::new(context),
+            resumer_factory,
+            awaiter_factory,
+        }
+    }
+
+    pub fn from_shared_context(
+        context: Arc<T::Context>,
         resumer_factory: ResumerFactory<T>,
         awaiter_factory: AwaiterFactory<T>,
     ) -> Self {
@@ -41,24 +53,12 @@ impl<T: PipelineTypes> TaskContext<T> {
         }
     }
 
-    pub fn without_context(
-        resumer_factory: ResumerFactory<T>,
-        awaiter_factory: AwaiterFactory<T>,
-    ) -> Self {
-        Self::new(None, resumer_factory, awaiter_factory)
-    }
-
-    pub fn context_as<C: Any + Send + Sync>(&self) -> Option<&C> {
-        self.context.as_deref()?.downcast_ref::<C>()
-    }
-
-    pub fn context_ref<C: Any + Send + Sync>(&self) -> &C {
-        self.context_as::<C>()
-            .expect("task context is missing the requested type")
-    }
-
-    pub fn context(&self) -> Option<&Arc<dyn Any + Send + Sync>> {
+    pub fn context(&self) -> &T::Context {
         self.context.as_ref()
+    }
+
+    pub fn shared_context(&self) -> Arc<T::Context> {
+        Arc::clone(&self.context)
     }
 
     pub fn make_resumer(&self) -> BpResult<SharedResumer, T> {

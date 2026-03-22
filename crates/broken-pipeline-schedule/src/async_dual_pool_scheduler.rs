@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -49,7 +48,7 @@ where
         self.io_threads
     }
 
-    pub fn make_task_context(&self, context: Option<Arc<dyn Any + Send + Sync>>) -> TaskContext<T> {
+    pub fn make_task_context(&self, context: T::Context) -> TaskContext<T> {
         let _ = (self.cpu_threads, self.io_threads);
         TaskContext::new(
             context,

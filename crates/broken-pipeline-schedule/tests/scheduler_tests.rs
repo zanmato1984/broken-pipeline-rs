@@ -25,7 +25,7 @@ trait SchedulerLike: Default + Send + Sync + 'static {
 
 impl SchedulerLike for NaiveParallelScheduler<ArrowTypes> {
     fn make_ctx(&self) -> TaskContext<ArrowTypes> {
-        self.make_task_context(None)
+        self.make_task_context(())
     }
     fn schedule(
         &self,
@@ -41,7 +41,7 @@ impl SchedulerLike for NaiveParallelScheduler<ArrowTypes> {
 
 impl SchedulerLike for AsyncDualPoolScheduler<ArrowTypes> {
     fn make_ctx(&self) -> TaskContext<ArrowTypes> {
-        self.make_task_context(None)
+        self.make_task_context(())
     }
     fn schedule(
         &self,
@@ -57,7 +57,7 @@ impl SchedulerLike for AsyncDualPoolScheduler<ArrowTypes> {
 
 impl SchedulerLike for ParallelCoroScheduler<ArrowTypes> {
     fn make_ctx(&self) -> TaskContext<ArrowTypes> {
-        self.make_task_context(None)
+        self.make_task_context(())
     }
     fn schedule(
         &self,
@@ -73,7 +73,7 @@ impl SchedulerLike for ParallelCoroScheduler<ArrowTypes> {
 
 impl SchedulerLike for SequentialCoroScheduler<ArrowTypes> {
     fn make_ctx(&self) -> TaskContext<ArrowTypes> {
-        self.make_task_context(None)
+        self.make_task_context(())
     }
     fn schedule(
         &self,
@@ -232,6 +232,7 @@ struct TestScheduleTypes;
 impl PipelineTypes for TestScheduleTypes {
     type Batch = i32;
     type Error = String;
+    type Context = ();
 }
 
 impl ScheduleTypes for TestScheduleTypes {
@@ -243,7 +244,7 @@ impl ScheduleTypes for TestScheduleTypes {
 #[test]
 fn custom_pipeline_types_can_use_sequential_scheduler_for_tests() {
     let scheduler = SequentialCoroScheduler::<TestScheduleTypes>::default();
-    let ctx = scheduler.make_task_context(None);
+    let ctx = scheduler.make_task_context(());
     let awaiter_error = match ctx.make_awaiter(Vec::new()) {
         Ok(_) => panic!("empty resumers should surface a scheduler-local error"),
         Err(error) => error,

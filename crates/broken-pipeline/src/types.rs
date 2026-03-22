@@ -4,6 +4,7 @@ pub type ThreadId = usize;
 pub trait PipelineTypes {
     type Batch;
     type Error;
+    type Context: Send + Sync + 'static;
 }
 
 pub type BpResult<T, Types> = std::result::Result<T, <Types as PipelineTypes>::Error>;

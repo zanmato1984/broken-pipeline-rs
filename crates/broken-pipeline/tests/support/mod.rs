@@ -14,6 +14,7 @@ pub struct TestTypes;
 impl PipelineTypes for TestTypes {
     type Batch = i32;
     type Error = String;
+    type Context = usize;
 }
 
 #[derive(Default)]
@@ -56,7 +57,8 @@ impl Awaiter for RecordedAwaiter {
 }
 
 pub fn test_context() -> TaskContext<TestTypes> {
-    TaskContext::without_context(
+    TaskContext::new(
+        0usize,
         Arc::new(|| Ok(Arc::new(TestResumer::default()) as SharedResumer)),
         Arc::new(|resumers| Ok(Arc::new(RecordedAwaiter::new(resumers)) as SharedAwaiter)),
     )

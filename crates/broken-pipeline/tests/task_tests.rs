@@ -20,13 +20,13 @@ impl broken_pipeline::Awaiter for NoopAwaiter {
 #[test]
 fn task_context_and_status_helpers_match_cpp_contract() {
     let ctx = TaskContext::<TestTypes>::new(
-        Some(Arc::new(41usize)),
+        41usize,
         Arc::new(|| Ok(Arc::new(TestResumer::default()) as SharedResumer)),
         Arc::new(|resumers| Ok(Arc::new(RecordedAwaiter::new(resumers)) as SharedAwaiter)),
     );
 
-    assert_eq!(ctx.context_ref::<usize>(), &41usize);
-    assert_eq!(ctx.context_as::<usize>(), Some(&41usize));
+    assert_eq!(ctx.context(), &41usize);
+    assert_eq!(*ctx.shared_context(), 41usize);
     assert!(TaskStatus::Continue.is_continue());
     assert!(TaskStatus::Yield.is_yield());
     assert!(TaskStatus::Finished.is_finished());

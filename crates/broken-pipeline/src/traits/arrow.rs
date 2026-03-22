@@ -15,4 +15,5 @@ pub struct ArrowTypes;
 impl PipelineTypes for ArrowTypes {
     type Batch = Batch;
     type Error = Error;
+    type Context = ();
 }

@@ -10,10 +10,10 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr;
 
 use arrow_schema::ArrowError;
-use broken_pipeline::{Continuation, Task, TaskHint, TaskHintType, TaskStatus};
-use broken_pipeline_schedule::{
-    NaiveParallelScheduler, SequentialCoroScheduler, TaskGroup, Traits,
+use broken_pipeline::{
+    traits::arrow::ArrowTypes, Continuation, Task, TaskGroup, TaskHint, TaskHintType, TaskStatus,
 };
+use broken_pipeline_schedule::{NaiveParallelScheduler, SequentialCoroScheduler};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -118,7 +118,7 @@ unsafe fn run_with_naive(
 ) -> bp_c_run_result {
     match build_group(task, num_tasks, continuation) {
         Ok(group) => {
-            let scheduler = NaiveParallelScheduler::default();
+            let scheduler = NaiveParallelScheduler::<ArrowTypes>::default();
             let handle = scheduler.schedule_task_group(group, scheduler.make_task_context(None));
             to_run_result(scheduler.wait_task_group(handle))
         }
@@ -133,7 +133,7 @@ unsafe fn run_with_sequential(
 ) -> bp_c_run_result {
     match build_group(task, num_tasks, continuation) {
         Ok(group) => {
-            let scheduler = SequentialCoroScheduler::default();
+            let scheduler = SequentialCoroScheduler::<ArrowTypes>::default();
             let handle = scheduler.schedule_task_group(group, scheduler.make_task_context(None));
             to_run_result(scheduler.wait_task_group(handle))
         }
@@ -145,7 +145,7 @@ unsafe fn build_group(
     task: *const bp_c_task_definition,
     num_tasks: usize,
     continuation: *const bp_c_continuation_definition,
-) -> Result<TaskGroup, ArrowError> {
+) -> Result<TaskGroup<ArrowTypes>, ArrowError> {
     let task_def = task
         .as_ref()
         .ok_or_else(|| ArrowError::ComputeError("task definition must not be null".into()))?;
@@ -167,7 +167,7 @@ unsafe fn build_group(
     }
 }
 
-unsafe fn make_task(definition: bp_c_task_definition) -> Result<Task<Traits>, ArrowError> {
+unsafe fn make_task(definition: bp_c_task_definition) -> Result<Task<ArrowTypes>, ArrowError> {
     let name = c_string(definition.name, "Task")?;
     let hint = if definition.io_hint {
         TaskHint {
@@ -188,7 +188,7 @@ unsafe fn make_task(definition: bp_c_task_definition) -> Result<Task<Traits>, Ar
 
 unsafe fn make_continuation(
     definition: bp_c_continuation_definition,
-) -> Result<Continuation<Traits>, ArrowError> {
+) -> Result<Continuation<ArrowTypes>, ArrowError> {
     let name = c_string(definition.name, "Continuation")?;
     let hint = if definition.io_hint {
         TaskHint {

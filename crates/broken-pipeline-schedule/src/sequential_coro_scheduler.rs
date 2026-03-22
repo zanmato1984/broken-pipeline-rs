@@ -8,10 +8,10 @@ use crate::detail::{SingleThreadAwaiter, SingleThreadResumer};
 use crate::naive_parallel_scheduler::{
     run_task_group, wait_handle, wait_single_thread_ready, TaskGroupHandle,
 };
-use crate::traits::{ScheduleTypes, Traits};
+use crate::traits::ScheduleTypes;
 
 #[derive(Clone)]
-pub struct SequentialCoroScheduler<T: ScheduleTypes = Traits>
+pub struct SequentialCoroScheduler<T: ScheduleTypes>
 where
     T::Error: Send + 'static,
 {

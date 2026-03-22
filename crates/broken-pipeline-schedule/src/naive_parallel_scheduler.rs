@@ -10,9 +10,9 @@ use broken_pipeline::{
 };
 
 use crate::detail::{CallbackResumer, ConditionalAwaiter};
-use crate::traits::{ScheduleError, ScheduleTypes, Traits};
+use crate::traits::{ScheduleError, ScheduleTypes};
 
-pub struct TaskGroupHandle<T: ScheduleTypes = Traits>
+pub struct TaskGroupHandle<T: ScheduleTypes>
 where
     T::Error: Send + 'static,
 {
@@ -33,7 +33,7 @@ where
 }
 
 #[derive(Clone)]
-pub struct NaiveParallelScheduler<T: ScheduleTypes = Traits>
+pub struct NaiveParallelScheduler<T: ScheduleTypes>
 where
     T::Error: Send + 'static,
 {

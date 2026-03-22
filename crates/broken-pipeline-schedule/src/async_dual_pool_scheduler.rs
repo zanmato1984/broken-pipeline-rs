@@ -8,10 +8,10 @@ use crate::detail::{CallbackResumer, FutureAwaiter};
 use crate::naive_parallel_scheduler::{
     run_task_group, wait_future_ready, wait_handle, TaskGroupHandle,
 };
-use crate::traits::{ScheduleTypes, Traits};
+use crate::traits::ScheduleTypes;
 
 #[derive(Clone, Debug)]
-pub struct AsyncDualPoolScheduler<T: ScheduleTypes = Traits>
+pub struct AsyncDualPoolScheduler<T: ScheduleTypes>
 where
     T::Error: Send + 'static,
 {

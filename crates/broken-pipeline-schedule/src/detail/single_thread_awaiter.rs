@@ -41,7 +41,7 @@ impl SingleThreadAwaiter {
             let callback_resumer = resumer
                 .as_any()
                 .downcast_ref::<SingleThreadResumer>()
-                .ok_or_else(|| ScheduleError::UnexpectedResumerType {
+                .ok_or(ScheduleError::UnexpectedResumerType {
                     awaiter: "SingleThreadAwaiter",
                     expected: "SingleThreadResumer",
                 })?;

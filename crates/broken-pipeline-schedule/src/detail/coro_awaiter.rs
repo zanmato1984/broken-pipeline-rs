@@ -42,7 +42,7 @@ impl CoroAwaiter {
                 resumer
                     .as_any()
                     .downcast_ref::<CoroResumer>()
-                    .ok_or_else(|| ScheduleError::UnexpectedResumerType {
+                    .ok_or(ScheduleError::UnexpectedResumerType {
                         awaiter: "CoroAwaiter",
                         expected: "CoroResumer",
                     })?;

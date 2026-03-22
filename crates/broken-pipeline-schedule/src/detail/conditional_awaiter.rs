@@ -1,10 +1,10 @@
 use std::any::Any;
 use std::sync::{Arc, Condvar, Mutex};
 
-use arrow_schema::ArrowError;
 use broken_pipeline::{Awaiter, SharedResumer};
 
 use super::CallbackResumer;
+use crate::traits::ScheduleError;
 
 pub struct ConditionalAwaiter {
     num_readies: usize,
@@ -14,16 +14,20 @@ pub struct ConditionalAwaiter {
 }
 
 impl ConditionalAwaiter {
-    pub fn new(num_readies: usize, resumers: Vec<SharedResumer>) -> Result<Arc<Self>, ArrowError> {
+    pub fn new(
+        num_readies: usize,
+        resumers: Vec<SharedResumer>,
+    ) -> Result<Arc<Self>, ScheduleError> {
         if resumers.is_empty() {
-            return Err(ArrowError::ComputeError(
-                "ConditionalAwaiter: empty resumers".to_string(),
-            ));
+            return Err(ScheduleError::EmptyResumers {
+                awaiter: "ConditionalAwaiter",
+            });
         }
         if num_readies == 0 {
-            return Err(ArrowError::ComputeError(
-                "ConditionalAwaiter: num_readies must be > 0".to_string(),
-            ));
+            return Err(ScheduleError::InvalidReadyCount {
+                awaiter: "ConditionalAwaiter",
+                num_readies,
+            });
         }
 
         let awaiter = Arc::new(Self {
@@ -37,10 +41,9 @@ impl ConditionalAwaiter {
             let callback_resumer = resumer
                 .as_any()
                 .downcast_ref::<CallbackResumer>()
-                .ok_or_else(|| {
-                    ArrowError::ComputeError(
-                        "ConditionalAwaiter: unexpected resumer type".to_string(),
-                    )
+                .ok_or_else(|| ScheduleError::UnexpectedResumerType {
+                    awaiter: "ConditionalAwaiter",
+                    expected: "CallbackResumer",
                 })?;
             let awaiter_clone = Arc::clone(&awaiter);
             callback_resumer.add_callback(move || awaiter_clone.notify_ready());

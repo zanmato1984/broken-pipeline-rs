@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -73,7 +72,7 @@ impl<T: ScheduleTypes> NaiveParallelScheduler<T>
 where
     T::Error: Send + 'static,
 {
-    pub fn make_task_context(&self, context: Option<Arc<dyn Any + Send + Sync>>) -> TaskContext<T> {
+    pub fn make_task_context(&self, context: T::Context) -> TaskContext<T> {
         TaskContext::new(
             context,
             Arc::new(|| Ok(Arc::new(CallbackResumer::default()) as SharedResumer)),

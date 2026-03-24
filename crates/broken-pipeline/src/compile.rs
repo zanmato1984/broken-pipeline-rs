@@ -38,14 +38,22 @@ pub fn compile<T: PipelineTypes>(pipeline: &Pipeline<T>, dop: usize) -> Pipeline
             if let Some(implicit_source) = pipe.implicit_source() {
                 let implicit_source_id = arc_id(&implicit_source);
                 pipe_source_map.insert(pipe_id, Arc::clone(&implicit_source));
+                let derived_channel = match channel.input_id() {
+                    Some(input_id) => PipelineChannel::with_input_id(
+                        input_id,
+                        Arc::clone(&implicit_source),
+                        channel.pipes()[index + 1..].to_vec(),
+                    ),
+                    None => PipelineChannel::new(
+                        Arc::clone(&implicit_source),
+                        channel.pipes()[index + 1..].to_vec(),
+                    ),
+                };
                 topology.insert(
                     implicit_source_id,
                     TopologyEntry {
                         stage_id,
-                        channel: PipelineChannel::new(
-                            Arc::clone(&implicit_source),
-                            channel.pipes()[index + 1..].to_vec(),
-                        ),
+                        channel: derived_channel,
                     },
                 );
                 sources_keep_order.push(implicit_source_id);

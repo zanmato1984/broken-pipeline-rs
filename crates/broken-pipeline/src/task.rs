@@ -24,6 +24,7 @@ pub type AwaiterFactory<T> =
 #[derive(Clone)]
 pub struct TaskContext<T: PipelineTypes> {
     context: Arc<T::Context>,
+    input_id: Option<usize>,
     resumer_factory: ResumerFactory<T>,
     awaiter_factory: AwaiterFactory<T>,
 }
@@ -36,6 +37,7 @@ impl<T: PipelineTypes> TaskContext<T> {
     ) -> Self {
         Self {
             context: Arc::new(context),
+            input_id: None,
             resumer_factory,
             awaiter_factory,
         }
@@ -48,6 +50,7 @@ impl<T: PipelineTypes> TaskContext<T> {
     ) -> Self {
         Self {
             context,
+            input_id: None,
             resumer_factory,
             awaiter_factory,
         }
@@ -59,6 +62,19 @@ impl<T: PipelineTypes> TaskContext<T> {
 
     pub fn shared_context(&self) -> Arc<T::Context> {
         Arc::clone(&self.context)
+    }
+
+    pub fn input_id(&self) -> Option<usize> {
+        self.input_id
+    }
+
+    pub fn with_input_id(&self, input_id: usize) -> Self {
+        Self {
+            context: self.context.clone(),
+            input_id: Some(input_id),
+            resumer_factory: Arc::clone(&self.resumer_factory),
+            awaiter_factory: Arc::clone(&self.awaiter_factory),
+        }
     }
 
     pub fn make_resumer(&self) -> BpResult<SharedResumer, T> {

@@ -151,3 +151,46 @@ fn compile_triple_stage_pipeline_matches_cpp_stage_splitting() {
     assert!(Arc::ptr_eq(stage2.channels()[0].source(), &implicit3));
     assert!(stage2.channels()[0].pipes().is_empty());
 }
+
+#[test]
+fn compile_implicit_source_stage_preserves_input_id() {
+    let traces = trace_log();
+    let source = shared_source(ScriptedSource::new(
+        "Source",
+        vec![vec![]],
+        Arc::clone(&traces),
+    ));
+    let implicit = shared_source(ScriptedSource::new(
+        "ImplicitSource",
+        vec![vec![]],
+        Arc::clone(&traces),
+    ));
+    let pipe = shared_pipe(ScriptedPipe::new(
+        "Pipe",
+        vec![vec![]],
+        vec![],
+        Some(Arc::clone(&implicit)),
+        Arc::clone(&traces),
+    ));
+    let sink = shared_sink(ScriptedSink::new("Sink", vec![vec![]], traces));
+
+    let pipeline = Pipeline::<TestTypes>::new(
+        "InputIdAcrossImplicitSource",
+        vec![PipelineChannel::with_input_id(
+            7,
+            Arc::clone(&source),
+            vec![Arc::clone(&pipe)],
+        )],
+        sink,
+    );
+
+    let exec = compile(&pipeline, 1);
+
+    assert_eq!(exec.pipelinexes().len(), 2);
+    assert_eq!(exec.pipelinexes()[0].channels()[0].input_id(), Some(7));
+    assert_eq!(exec.pipelinexes()[1].channels()[0].input_id(), Some(7));
+    assert!(Arc::ptr_eq(
+        exec.pipelinexes()[1].channels()[0].source(),
+        &implicit
+    ));
+}

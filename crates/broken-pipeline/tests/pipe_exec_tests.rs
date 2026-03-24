@@ -1,8 +1,11 @@
 mod support;
 
 use std::sync::Arc;
+use std::sync::Mutex;
 
-use broken_pipeline::{compile, Pipeline, PipelineChannel};
+use broken_pipeline::{
+    compile, OpOutput, PipeOperator, Pipeline, PipelineChannel, SinkOperator, TaskContext, ThreadId,
+};
 
 use support::{
     awaiter_resumers, shared_pipe, shared_sink, shared_source, test_context, trace, trace_log,
@@ -451,5 +454,134 @@ fn error_cancels_subsequent_calls() {
     assert_eq!(
         traces(&trace_log),
         vec![trace("Source", "Source", None, "ERROR(boom)")]
+    );
+}
+
+#[derive(Clone)]
+struct InputIdRecordingPipe {
+    name: &'static str,
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+impl PipeOperator<TestTypes> for InputIdRecordingPipe {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn pipe(
+        &self,
+        ctx: &TaskContext<TestTypes>,
+        _thread_id: ThreadId,
+        input: Option<i32>,
+    ) -> Result<OpOutput<i32>, String> {
+        self.log
+            .lock()
+            .expect("input-id log mutex poisoned")
+            .push(format!(
+                "{}::Pipe input_id={:?} input={input:?}",
+                self.name,
+                ctx.input_id()
+            ));
+        Ok(OpOutput::PipeEven(
+            input.expect("recording pipe should receive a batch") * 10,
+        ))
+    }
+
+    fn has_drain(&self) -> bool {
+        true
+    }
+
+    fn drain(
+        &self,
+        ctx: &TaskContext<TestTypes>,
+        _thread_id: ThreadId,
+    ) -> Result<OpOutput<i32>, String> {
+        self.log
+            .lock()
+            .expect("input-id log mutex poisoned")
+            .push(format!(
+                "{}::Drain input_id={:?}",
+                self.name,
+                ctx.input_id()
+            ));
+        Ok(OpOutput::Finished(None))
+    }
+}
+
+#[derive(Clone)]
+struct InputIdRecordingSink {
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+impl SinkOperator<TestTypes> for InputIdRecordingSink {
+    fn name(&self) -> &str {
+        "InputIdSink"
+    }
+
+    fn sink(
+        &self,
+        ctx: &TaskContext<TestTypes>,
+        _thread_id: ThreadId,
+        input: Option<i32>,
+    ) -> Result<OpOutput<i32>, String> {
+        self.log
+            .lock()
+            .expect("input-id log mutex poisoned")
+            .push(format!(
+                "Sink::Sink input_id={:?} input={input:?}",
+                ctx.input_id()
+            ));
+        Ok(OpOutput::PipeSinkNeedsMore)
+    }
+}
+
+#[test]
+fn explicit_channel_input_id_reaches_pipe_drain_and_sink() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let source1 = shared_source(ScriptedSource::new(
+        "Source1",
+        vec![vec![
+            Step::output(ScriptOutput::SourcePipeHasMore(1)),
+            Step::output(ScriptOutput::Finished(None)),
+        ]],
+        trace_log(),
+    ));
+    let source2 = shared_source(ScriptedSource::new(
+        "Source2",
+        vec![vec![Step::output(ScriptOutput::Finished(None))]],
+        trace_log(),
+    ));
+    let pipe1 = shared_pipe(InputIdRecordingPipe {
+        name: "Pipe7",
+        log: Arc::clone(&log),
+    });
+    let pipe2 = shared_pipe(InputIdRecordingPipe {
+        name: "Pipe9",
+        log: Arc::clone(&log),
+    });
+    let sink = shared_sink(InputIdRecordingSink {
+        log: Arc::clone(&log),
+    });
+    let pipeline = Pipeline::<TestTypes>::new(
+        "InputIds",
+        vec![
+            PipelineChannel::with_input_id(7, source1, vec![pipe1]),
+            PipelineChannel::with_input_id(9, source2, vec![pipe2]),
+        ],
+        sink,
+    );
+    let runtime = compile(&pipeline, 1).pipelinexes()[0].pipe_exec();
+    let ctx = test_context();
+
+    assert!(runtime.step(&ctx, 0).unwrap().is_continue());
+    assert!(runtime.step(&ctx, 0).unwrap().is_finished());
+    assert_eq!(
+        *log.lock().expect("input-id log mutex poisoned"),
+        vec![
+            "Pipe7::Pipe input_id=Some(7) input=Some(1)".to_string(),
+            "Sink::Sink input_id=Some(7) input=Some(10)".to_string(),
+            "Pipe7::Drain input_id=Some(7)".to_string(),
+            "Pipe9::Drain input_id=Some(9)".to_string(),
+        ]
     );
 }

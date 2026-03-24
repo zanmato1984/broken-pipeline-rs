@@ -182,7 +182,11 @@ impl<T: PipelineTypes> ExecState<T> {
     fn new(channels: Vec<PipelineChannel<T>>, sink: SharedSinkOp<T>, dop: usize) -> Self {
         let channel_runtimes = channels
             .into_iter()
-            .map(|channel| ChannelRuntime::new(channel, Arc::clone(&sink), dop))
+            .enumerate()
+            .map(|(channel_index, channel)| {
+                let input_id = channel.input_id().unwrap_or(channel_index);
+                ChannelRuntime::new(channel, input_id, Arc::clone(&sink), dop)
+            })
             .collect::<Vec<_>>();
 
         let thread_locals = (0..dop)
@@ -301,6 +305,7 @@ impl ExecThreadLocal {
 }
 
 struct ChannelRuntime<T: PipelineTypes> {
+    input_id: usize,
     source: SharedSourceOp<T>,
     pipes: Vec<SharedPipeOp<T>>,
     sink: SharedSinkOp<T>,
@@ -309,7 +314,12 @@ struct ChannelRuntime<T: PipelineTypes> {
 }
 
 impl<T: PipelineTypes> ChannelRuntime<T> {
-    fn new(channel: PipelineChannel<T>, sink: SharedSinkOp<T>, dop: usize) -> Self {
+    fn new(
+        channel: PipelineChannel<T>,
+        input_id: usize,
+        sink: SharedSinkOp<T>,
+        dop: usize,
+    ) -> Self {
         let drain_ids = channel
             .pipes()
             .iter()
@@ -318,6 +328,7 @@ impl<T: PipelineTypes> ChannelRuntime<T> {
             .collect::<Vec<_>>();
 
         Self {
+            input_id,
             source: Arc::clone(channel.source()),
             pipes: channel.pipes().to_vec(),
             sink,
@@ -332,21 +343,23 @@ impl<T: PipelineTypes> ChannelRuntime<T> {
         thread_id: ThreadId,
         cancelled: &mut bool,
     ) -> BpResult<OpOutput<T::Batch>, T> {
+        let input_ctx = ctx.with_input_id(self.input_id);
+
         if *cancelled {
             return Ok(OpOutput::Cancelled);
         }
 
         if self.thread_locals[thread_id].sinking {
             self.thread_locals[thread_id].sinking = false;
-            return self.sink_step(ctx, thread_id, None, cancelled);
+            return self.sink_step(&input_ctx, thread_id, None, cancelled);
         }
 
         if let Some(pipe_id) = self.thread_locals[thread_id].pipe_stack.pop() {
-            return self.pipe_step(ctx, thread_id, pipe_id, None, cancelled);
+            return self.pipe_step(&input_ctx, thread_id, pipe_id, None, cancelled);
         }
 
         if !self.thread_locals[thread_id].source_done {
-            let source_out = match self.source.source(ctx, thread_id) {
+            let source_out = match self.source.source(&input_ctx, thread_id) {
                 Ok(out) => out,
                 Err(error) => {
                     *cancelled = true;
@@ -359,11 +372,11 @@ impl<T: PipelineTypes> ChannelRuntime<T> {
                 OpOutput::Finished(batch) => {
                     self.thread_locals[thread_id].source_done = true;
                     if let Some(batch) = batch {
-                        return self.pipe_step(ctx, thread_id, 0, Some(batch), cancelled);
+                        return self.pipe_step(&input_ctx, thread_id, 0, Some(batch), cancelled);
                     }
                 }
                 OpOutput::SourcePipeHasMore(batch) => {
-                    return self.pipe_step(ctx, thread_id, 0, Some(batch), cancelled);
+                    return self.pipe_step(&input_ctx, thread_id, 0, Some(batch), cancelled);
                 }
                 other => panic!("invalid source output: {}", other.label()),
             }
@@ -372,7 +385,7 @@ impl<T: PipelineTypes> ChannelRuntime<T> {
         while self.thread_locals[thread_id].draining < self.drain_ids.len() {
             let drain_slot = self.thread_locals[thread_id].draining;
             let drain_id = self.drain_ids[drain_slot];
-            let drain_out = match self.pipes[drain_id].drain(ctx, thread_id) {
+            let drain_out = match self.pipes[drain_id].drain(&input_ctx, thread_id) {
                 Ok(out) => out,
                 Err(error) => {
                     *cancelled = true;
@@ -395,13 +408,19 @@ impl<T: PipelineTypes> ChannelRuntime<T> {
                 }
                 OpOutput::Blocked(resumer) => return Ok(OpOutput::Blocked(resumer)),
                 OpOutput::SourcePipeHasMore(batch) => {
-                    return self.pipe_step(ctx, thread_id, drain_id + 1, Some(batch), cancelled);
+                    return self.pipe_step(
+                        &input_ctx,
+                        thread_id,
+                        drain_id + 1,
+                        Some(batch),
+                        cancelled,
+                    );
                 }
                 OpOutput::Finished(batch) => {
                     self.thread_locals[thread_id].draining += 1;
                     if let Some(batch) = batch {
                         return self.pipe_step(
-                            ctx,
+                            &input_ctx,
                             thread_id,
                             drain_id + 1,
                             Some(batch),

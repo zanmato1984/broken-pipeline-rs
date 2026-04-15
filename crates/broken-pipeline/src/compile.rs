@@ -12,12 +12,17 @@ pub fn compile<T: PipelineTypes>(pipeline: &Pipeline<T>, dop: usize) -> Pipeline
     let mut implicit_sources_keepalive = HashMap::<usize, SharedSourceOp<T>>::new();
     let mut pipe_source_map = HashMap::<usize, SharedSourceOp<T>>::new();
 
-    for channel in pipeline.channels() {
+    for (channel_index, channel) in pipeline.channels().iter().enumerate() {
         let mut stage_id = 0usize;
+        let channel_input_id = channel.input_id().unwrap_or(channel_index);
         let source_id = arc_id(channel.source());
         topology.entry(source_id).or_insert_with(|| TopologyEntry {
             stage_id,
-            channel: channel.clone(),
+            channel: PipelineChannel::with_input_id(
+                channel_input_id,
+                Arc::clone(channel.source()),
+                channel.pipes().to_vec(),
+            ),
         });
         sources_keep_order.push(source_id);
         stage_id += 1;
@@ -42,7 +47,8 @@ pub fn compile<T: PipelineTypes>(pipeline: &Pipeline<T>, dop: usize) -> Pipeline
                     implicit_source_id,
                     TopologyEntry {
                         stage_id,
-                        channel: PipelineChannel::new(
+                        channel: PipelineChannel::with_input_id(
+                            channel_input_id,
                             Arc::clone(&implicit_source),
                             channel.pipes()[index + 1..].to_vec(),
                         ),

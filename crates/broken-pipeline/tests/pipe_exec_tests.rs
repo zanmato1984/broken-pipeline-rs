@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use broken_pipeline::{
-    compile, OpOutput, PipeOperator, Pipeline, PipelineChannel, SinkOperator, TaskContext, ThreadId,
+    compile, OpOutput, PipeOperator, Pipeline, PipelineChannel, SinkOperator, SourceOperator,
+    TaskContext, ThreadId,
 };
 
 use support::{
@@ -535,6 +536,30 @@ impl SinkOperator<TestTypes> for InputIdRecordingSink {
     }
 }
 
+#[derive(Clone)]
+struct InputIdRecordingSource {
+    name: &'static str,
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+impl SourceOperator<TestTypes> for InputIdRecordingSource {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn source(
+        &self,
+        ctx: &TaskContext<TestTypes>,
+        _thread_id: ThreadId,
+    ) -> Result<OpOutput<i32>, String> {
+        self.log
+            .lock()
+            .expect("input-id log mutex poisoned")
+            .push(format!("{}::Source input_id={:?}", self.name, ctx.input_id()));
+        Ok(OpOutput::Finished(None))
+    }
+}
+
 #[test]
 fn explicit_channel_input_id_reaches_pipe_drain_and_sink() {
     let log = Arc::new(Mutex::new(Vec::new()));
@@ -583,5 +608,45 @@ fn explicit_channel_input_id_reaches_pipe_drain_and_sink() {
             "Pipe7::Drain input_id=Some(7)".to_string(),
             "Pipe9::Drain input_id=Some(9)".to_string(),
         ]
+    );
+}
+
+#[test]
+fn implicit_source_stage_preserves_explicit_channel_input_id() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let source = shared_source(ScriptedSource::new(
+        "Source",
+        vec![vec![Step::output(ScriptOutput::Finished(None))]],
+        trace_log(),
+    ));
+    let implicit_source = shared_source(InputIdRecordingSource {
+        name: "Implicit7",
+        log: Arc::clone(&log),
+    });
+    let pipe = shared_pipe(ScriptedPipe::new(
+        "Pipe",
+        vec![vec![]],
+        vec![vec![Step::output(ScriptOutput::Finished(None))]],
+        Some(implicit_source),
+        trace_log(),
+    ));
+    let sink = shared_sink(ScriptedSink::new("Sink", vec![vec![]], trace_log()));
+    let pipeline = Pipeline::<TestTypes>::new(
+        "ImplicitInputId",
+        vec![PipelineChannel::with_input_id(7, source, vec![pipe])],
+        sink,
+    );
+    let exec = compile(&pipeline, 1);
+    let ctx = test_context();
+
+    let stage0 = exec.pipelinexes()[0].pipe_exec();
+    assert!(stage0.step(&ctx, 0).unwrap().is_finished());
+
+    let stage1 = exec.pipelinexes()[1].pipe_exec();
+    assert!(stage1.step(&ctx, 0).unwrap().is_finished());
+
+    assert_eq!(
+        *log.lock().expect("input-id log mutex poisoned"),
+        vec!["Implicit7::Source input_id=Some(7)".to_string()]
     );
 }

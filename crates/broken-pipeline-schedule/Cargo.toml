@@ -11,5 +11,5 @@ name = "broken_pipeline_schedule"
 path = "src/lib.rs"
 
 [dependencies]
-arrow-schema = "50.0.0"
+arrow-schema = "56"
 broken-pipeline = { path = "../broken-pipeline" }

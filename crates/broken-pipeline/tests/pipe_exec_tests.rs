@@ -555,7 +555,11 @@ impl SourceOperator<TestTypes> for InputIdRecordingSource {
         self.log
             .lock()
             .expect("input-id log mutex poisoned")
-            .push(format!("{}::Source input_id={:?}", self.name, ctx.input_id()));
+            .push(format!(
+                "{}::Source input_id={:?}",
+                self.name,
+                ctx.input_id()
+            ));
         Ok(OpOutput::Finished(None))
     }
 }

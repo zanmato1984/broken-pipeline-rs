@@ -13,6 +13,6 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-arrow-schema = "50.0.0"
+arrow-schema = "56"
 broken-pipeline = { path = "../broken-pipeline" }
 broken-pipeline-schedule = { path = "../broken-pipeline-schedule" }

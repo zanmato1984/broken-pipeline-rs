@@ -38,13 +38,12 @@ impl FutureAwaiter {
         });
 
         for resumer in &awaiter.resumers {
-            let callback_resumer = resumer
-                .as_any()
-                .downcast_ref::<CallbackResumer>()
-                .ok_or_else(|| ScheduleError::UnexpectedResumerType {
+            let callback_resumer = resumer.as_any().downcast_ref::<CallbackResumer>().ok_or(
+                ScheduleError::UnexpectedResumerType {
                     awaiter: "FutureAwaiter",
                     expected: "CallbackResumer",
-                })?;
+                },
+            )?;
             let awaiter_clone = Arc::clone(&awaiter);
             callback_resumer.add_callback(move || awaiter_clone.notify_ready());
         }

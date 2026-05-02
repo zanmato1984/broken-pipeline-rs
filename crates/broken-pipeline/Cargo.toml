@@ -11,5 +11,5 @@ name = "broken_pipeline"
 path = "src/lib.rs"
 
 [dependencies]
-arrow-array = "50.0.0"
-arrow-schema = "50.0.0"
+arrow-array = "58"
+arrow-schema = "58"

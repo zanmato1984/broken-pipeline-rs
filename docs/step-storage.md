@@ -8,6 +8,11 @@ The scratch vector is cleared by an unwind-safe guard on every return: continue,
 blocked, yield, finished, returned error, cancellation, and panic. Its borrowed
 slice is valid only during the factory call. Parked per-channel resumers remain
 owned until resumed, fatal cancellation is observed by that task, or drop.
+This includes reentry after another task panics: an idle parked task acquires
+only its own slot, installs fatal cleanup, and then preserves the poison panic
+without invoking callbacks. An already-poisoned reentry never waits for an
+occupied slot; the active entry retains responsibility for its own cleanup.
+Other parked slots are not globally cleared before they reenter or are dropped.
 
 Every channel continuation stack is reserved at executor construction for its
 actual pipe count. Its indexes are strictly increasing: forward traversal pushes

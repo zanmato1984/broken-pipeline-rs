@@ -463,6 +463,86 @@ impl SinkOperator<TestTypes> for MultiSink {
     }
 }
 
+struct CrossTaskPanicSource {
+    gate: Arc<Gate>,
+    calls: [AtomicUsize; 2],
+}
+
+impl SourceOperator<TestTypes> for CrossTaskPanicSource {
+    fn name(&self) -> &str {
+        "cross-task-panic"
+    }
+    fn source(
+        &self,
+        ctx: &TaskContext<TestTypes>,
+        task: ThreadId,
+    ) -> Result<OpOutput<i32>, String> {
+        self.calls[task].fetch_add(1, Ordering::SeqCst);
+        if task == 1 {
+            panic!("intentional cross-task panic with other callback occupied");
+        }
+        self.gate.enter(ctx, task);
+        Ok(OpOutput::Finished(Some(1)))
+    }
+}
+
+#[test]
+fn poisoned_reentry_never_waits_for_an_occupied_task_slot() {
+    let gate = Arc::new(Gate::default());
+    let outputs = OutputLog::default();
+    let source = Arc::new(CrossTaskPanicSource {
+        gate: gate.clone(),
+        calls: std::array::from_fn(|_| AtomicUsize::new(0)),
+    });
+    let pipeline = Pipeline::new(
+        "occupied-poison",
+        vec![PipelineChannel::with_input_id(43, source.clone(), vec![])],
+        Arc::new(ProbeSink {
+            gate: None,
+            outputs: outputs.clone(),
+        }),
+    );
+    let exec = compile(&pipeline, 2).pipelinexes()[0].pipe_exec();
+    let task = exec.task_group().task().clone();
+    let running_task = task.clone();
+    let running = thread::spawn(move || running_task.run(&test_context(), 0));
+    let observed = gate.observe(1, RENDEZVOUS);
+    let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        task.run(&test_context(), 1)
+    }));
+    let (tx, rx) = mpsc::channel();
+    let duplicate_task = task.clone();
+    let duplicate = thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            duplicate_task.run(&test_context(), 0)
+        }));
+        tx.send(result.is_err()).unwrap();
+    });
+    // Observe the duplicate's panic while the original callback still owns its
+    // slot; always release and join before asserting, including a broken build.
+    let duplicate_before_release = rx.recv_timeout(RENDEZVOUS);
+    gate.release();
+    let running_result = running.join();
+    let duplicate_result = duplicate.join();
+    assert_eq!(observed, vec![(0, Some(43))]);
+    assert!(poison.is_err());
+    assert!(
+        matches!(duplicate_before_release, Ok(true)),
+        "poisoned reentry blocked behind the active task: {duplicate_before_release:?}"
+    );
+    assert!(
+        running_result.is_err(),
+        "active entry also preserves poison panic"
+    );
+    assert!(duplicate_result.is_ok());
+    assert!(
+        outputs.lock().unwrap().is_empty(),
+        "no sink callback after fatal poison"
+    );
+    assert_eq!(source.calls[0].load(Ordering::SeqCst), 1);
+    assert_eq!(source.calls[1].load(Ordering::SeqCst), 1);
+}
+
 #[test]
 fn task_and_input_identity_survive_multichannel_continuations_and_thread_migration() {
     let calls = Calls::default();

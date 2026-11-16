@@ -201,12 +201,19 @@ impl<T: PipelineTypes> ExecState<T> {
     }
 
     fn step(&self, ctx: &TaskContext<T>, task_id: TaskId) -> BpResult<TaskStatus, T> {
-        self.assert_not_poisoned();
         // Lock only this logical task, never all callbacks in the executor.
-        // Acquire the lock even after cancellation to retain poison fail-fast.
-        let mut local = self.task_locals[task_id]
-            .lock()
-            .expect("pipe exec mutex poisoned");
+        // A parked task must install cleanup before observing fatal poison.
+        // Never wait for an occupied task once poison is already visible: its
+        // active entry owns cleanup, and reentry must still fail fast.
+        let mut local = if self.poisoned.load(Ordering::Acquire) {
+            self.task_locals[task_id]
+                .try_lock()
+                .expect("pipe exec mutex poisoned")
+        } else {
+            self.task_locals[task_id]
+                .lock()
+                .expect("pipe exec mutex poisoned")
+        };
         let _panic_guard = CancelOnPanic {
             cancelled: &self.cancelled,
             poisoned: &self.poisoned,

@@ -219,24 +219,20 @@ where
             blocked = None;
         }
 
-        match continuation.run(&task_ctx) {
-            Ok(status) => {
-                statuses
-                    .lock()
-                    .expect("task group status mutex poisoned")
-                    .push(status.clone());
-                match status {
-                    TaskStatus::Continue | TaskStatus::Yield => {
-                        thread::yield_now();
-                    }
-                    TaskStatus::Blocked(awaiter) => {
-                        blocked = Some(awaiter);
-                    }
-                    TaskStatus::Finished => return Ok(TaskStatus::Finished),
-                    TaskStatus::Cancelled => return Ok(TaskStatus::Cancelled),
-                }
+        let status = continuation.run(&task_ctx)?;
+        statuses
+            .lock()
+            .expect("task group status mutex poisoned")
+            .push(status.clone());
+        match status {
+            TaskStatus::Continue | TaskStatus::Yield => {
+                thread::yield_now();
             }
-            Err(error) => return Err(error),
+            TaskStatus::Blocked(awaiter) => {
+                blocked = Some(awaiter);
+            }
+            TaskStatus::Finished => return Ok(TaskStatus::Finished),
+            TaskStatus::Cancelled => return Ok(TaskStatus::Cancelled),
         }
     }
 }

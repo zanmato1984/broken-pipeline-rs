@@ -789,3 +789,75 @@ fn fatal_awaiter_factory_error_cancels_subsequent_task_entries() {
     assert!(task.run(&ctx, 0).unwrap().is_cancelled());
     assert_eq!(source.calls.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn borrowed_context_callbacks_overlap_at_dop_one_two_four() {
+    for dop in [1, 2, 4] {
+        for phase in ["source", "pipe", "sink", "drain"] {
+            let gate = Arc::new(Gate::default());
+            let outputs = OutputLog::default();
+            let pipeline = Pipeline::new(
+                "borrowed-overlap",
+                vec![PipelineChannel::with_input_id(
+                    37,
+                    Arc::new(ProbeSource {
+                        gate: (phase == "source").then(|| gate.clone()),
+                        empty: phase == "drain",
+                    }),
+                    vec![Arc::new(ProbePipe {
+                        pipe_gate: (phase == "pipe").then(|| gate.clone()),
+                        drain_gate: (phase == "drain").then(|| gate.clone()),
+                    })],
+                )],
+                Arc::new(ProbeSink {
+                    gate: (phase == "sink").then(|| gate.clone()),
+                    outputs: outputs.clone(),
+                }),
+            );
+            let exec = compile(&pipeline, dop).pipelinexes()[0].pipe_exec();
+            let group = exec.task_group();
+            let workers: Vec<_> = (0..group.num_tasks())
+                .map(|id| {
+                    let task = group.task().clone();
+                    thread::spawn(move || {
+                        let a: broken_pipeline::SharedAwaiter =
+                            Arc::new(support::RecordedAwaiter::new(vec![]));
+                        let ctx = TaskContext::from_shared_context_with_borrowed_awaiter(
+                            Arc::new(0usize),
+                            Arc::new(|| panic!("no blocked callbacks")),
+                            Arc::new(move |_| Ok(a.clone())),
+                        );
+                        for _ in 0..10 {
+                            if task.run(&ctx, id).unwrap().is_finished() {
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                })
+                .collect();
+            let mut observed = gate.observe(dop, RENDEZVOUS);
+            gate.release();
+            let results: Vec<_> = workers.into_iter().map(|w| w.join()).collect();
+            for result in results {
+                assert!(result.unwrap());
+            }
+            observed.sort_unstable();
+            assert_eq!(
+                observed,
+                (0..dop).map(|id| (id, Some(37))).collect::<Vec<_>>(),
+                "{phase} DOP {dop}"
+            );
+            assert_eq!(gate.state.lock().unwrap().max_active, dop);
+            let mut actual = outputs.lock().unwrap().clone();
+            actual.sort_unstable();
+            let base = if phase == "drain" { 200 } else { 110 };
+            assert_eq!(
+                actual,
+                (0..dop)
+                    .map(|id| (id, Some(37), base + id as i32))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+}

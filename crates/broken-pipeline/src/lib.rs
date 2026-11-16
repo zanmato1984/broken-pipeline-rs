@@ -1,3 +1,6 @@
+#[cfg(test)]
+extern crate self as broken_pipeline;
+
 pub mod compile;
 pub mod operator;
 pub mod pipeline;
@@ -14,7 +17,7 @@ pub use operator::{
 pub use pipeline::{Pipeline, PipelineChannel};
 pub use pipeline_exec::{PipeExec, PipelineExec, Pipelinexe, SinkExec, SourceExec};
 pub use task::{
-    Awaiter, Continuation, Resumer, SharedAwaiter, SharedResumer, Task, TaskContext, TaskGroup,
-    TaskHint, TaskHintType, TaskStatus,
+    Awaiter, AwaiterFactory, BorrowedAwaiterFactory, Continuation, Resumer, ResumerFactory,
+    SharedAwaiter, SharedResumer, Task, TaskContext, TaskGroup, TaskHint, TaskHintType, TaskStatus,
 };
 pub use types::{BpResult, PipelineTypes, TaskId, ThreadId};

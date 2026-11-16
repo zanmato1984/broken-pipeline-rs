@@ -63,3 +63,74 @@ fn task_group_preserves_task_and_continuation_metadata() {
     );
     assert_eq!(task_group.task().hint().kind, TaskHintType::Cpu);
 }
+
+#[test]
+fn borrowed_and_owned_factory_public_apis_preserve_identity_and_inputs() {
+    use broken_pipeline::{AwaiterFactory, BorrowedAwaiterFactory, ResumerFactory};
+    let shared = Arc::new(91usize);
+    let signal: SharedResumer = Arc::new(TestResumer::default());
+    let expected = signal.clone();
+    let ready: SharedAwaiter = Arc::new(NoopAwaiter);
+    let returned = ready.clone();
+    let borrowed: BorrowedAwaiterFactory<TestTypes> = Arc::new(move |slice| {
+        assert_eq!(slice.len(), 1);
+        assert!(Arc::ptr_eq(&slice[0], &expected));
+        Ok(returned.clone())
+    });
+    let r = signal.clone();
+    let rf: ResumerFactory<TestTypes> = Arc::new(move || Ok(r.clone()));
+    let ctx = TaskContext::<TestTypes>::from_shared_context_with_borrowed_awaiter(
+        shared.clone(),
+        rf.clone(),
+        borrowed,
+    );
+    let input = ctx.with_input_id(17);
+    assert_eq!(ctx.input_id(), None);
+    assert_eq!(input.input_id(), Some(17));
+    assert!(Arc::ptr_eq(&shared, &input.shared_context()));
+    assert!(Arc::ptr_eq(
+        &ready,
+        &input
+            .make_awaiter_from_slice(std::slice::from_ref(&signal))
+            .unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        &ready,
+        &input.make_awaiter(vec![signal.clone()]).unwrap()
+    ));
+    let owned: AwaiterFactory<TestTypes> = Arc::new(|r| Ok(Arc::new(RecordedAwaiter::new(r))));
+    let legacy = TaskContext::<TestTypes>::from_shared_context(shared.clone(), rf, owned);
+    let old_owned = legacy.make_awaiter(vec![signal.clone()]).unwrap();
+    let old_slice = legacy.make_awaiter_from_slice(&[signal]).unwrap();
+    for a in [old_owned, old_slice] {
+        assert_eq!(
+            a.as_any()
+                .downcast_ref::<RecordedAwaiter>()
+                .unwrap()
+                .resumers()
+                .len(),
+            1
+        );
+    }
+    assert!(Arc::ptr_eq(&shared, &legacy.shared_context()));
+}
+
+#[test]
+fn borrowed_context_retains_existing_clone_contract() {
+    #[derive(Clone)]
+    struct Types;
+    impl broken_pipeline::PipelineTypes for Types {
+        type Batch = ();
+        type Error = ();
+        type Context = usize;
+    }
+    let shared = Arc::new(12);
+    let ctx = TaskContext::<Types>::from_shared_context_with_borrowed_awaiter(
+        shared.clone(),
+        Arc::new(|| Ok(Arc::new(TestResumer::default()))),
+        Arc::new(|_| Ok(Arc::new(NoopAwaiter))),
+    );
+    let cloned = ctx.with_input_id(4).clone();
+    assert_eq!(cloned.input_id(), Some(4));
+    assert!(Arc::ptr_eq(&shared, &cloned.shared_context()));
+}

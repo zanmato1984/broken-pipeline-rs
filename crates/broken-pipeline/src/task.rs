@@ -20,13 +20,41 @@ pub type SharedAwaiter = Arc<dyn Awaiter>;
 pub type ResumerFactory<T> = Arc<dyn Fn() -> BpResult<SharedResumer, T> + Send + Sync + 'static>;
 pub type AwaiterFactory<T> =
     Arc<dyn Fn(Vec<SharedResumer>) -> BpResult<SharedAwaiter, T> + Send + Sync + 'static>;
+/// The slice is borrowed only for the call; the returned awaiter is independently owned.
+///
+/// A borrowed factory cannot return an awaiter retaining its input slice:
+/// ```compile_fail
+/// use std::sync::Arc;
+/// use broken_pipeline::{Awaiter, BorrowedAwaiterFactory, PipelineTypes, SharedResumer};
+/// struct Types;
+/// impl PipelineTypes for Types { type Batch = (); type Error = (); type Context = (); }
+/// struct Kept(&'static [SharedResumer]);
+/// impl Awaiter for Kept { fn as_any(&self) -> &dyn std::any::Any { self } }
+/// let _: BorrowedAwaiterFactory<Types> = Arc::new(|slice| Ok(Arc::new(Kept(slice))));
+/// ```
+pub type BorrowedAwaiterFactory<T> =
+    Arc<dyn Fn(&[SharedResumer]) -> BpResult<SharedAwaiter, T> + Send + Sync + 'static>;
+
+enum ContextAwaiterFactory<T: PipelineTypes> {
+    Owned(AwaiterFactory<T>),
+    Borrowed(BorrowedAwaiterFactory<T>),
+}
+
+impl<T: PipelineTypes> Clone for ContextAwaiterFactory<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Owned(factory) => Self::Owned(Arc::clone(factory)),
+            Self::Borrowed(factory) => Self::Borrowed(Arc::clone(factory)),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct TaskContext<T: PipelineTypes> {
     context: Arc<T::Context>,
     input_id: Option<usize>,
     resumer_factory: ResumerFactory<T>,
-    awaiter_factory: AwaiterFactory<T>,
+    awaiter_factory: ContextAwaiterFactory<T>,
 }
 
 impl<T: PipelineTypes> TaskContext<T> {
@@ -39,7 +67,7 @@ impl<T: PipelineTypes> TaskContext<T> {
             context: Arc::new(context),
             input_id: None,
             resumer_factory,
-            awaiter_factory,
+            awaiter_factory: ContextAwaiterFactory::Owned(awaiter_factory),
         }
     }
 
@@ -52,7 +80,20 @@ impl<T: PipelineTypes> TaskContext<T> {
             context,
             input_id: None,
             resumer_factory,
-            awaiter_factory,
+            awaiter_factory: ContextAwaiterFactory::Owned(awaiter_factory),
+        }
+    }
+
+    pub fn from_shared_context_with_borrowed_awaiter(
+        context: Arc<T::Context>,
+        resumer_factory: ResumerFactory<T>,
+        awaiter_factory: BorrowedAwaiterFactory<T>,
+    ) -> Self {
+        Self {
+            context,
+            input_id: None,
+            resumer_factory,
+            awaiter_factory: ContextAwaiterFactory::Borrowed(awaiter_factory),
         }
     }
 
@@ -73,7 +114,7 @@ impl<T: PipelineTypes> TaskContext<T> {
             context: self.context.clone(),
             input_id: Some(input_id),
             resumer_factory: Arc::clone(&self.resumer_factory),
-            awaiter_factory: Arc::clone(&self.awaiter_factory),
+            awaiter_factory: self.awaiter_factory.clone(),
         }
     }
 
@@ -82,7 +123,21 @@ impl<T: PipelineTypes> TaskContext<T> {
     }
 
     pub fn make_awaiter(&self, resumers: Vec<SharedResumer>) -> BpResult<SharedAwaiter, T> {
-        (self.awaiter_factory)(resumers)
+        match &self.awaiter_factory {
+            ContextAwaiterFactory::Owned(factory) => factory(resumers),
+            ContextAwaiterFactory::Borrowed(factory) => factory(&resumers),
+        }
+    }
+
+    /// Legacy owned factories require an allocating conversion to an owned Vec.
+    pub fn make_awaiter_from_slice(
+        &self,
+        resumers: &[SharedResumer],
+    ) -> BpResult<SharedAwaiter, T> {
+        match &self.awaiter_factory {
+            ContextAwaiterFactory::Owned(factory) => factory(resumers.to_vec()),
+            ContextAwaiterFactory::Borrowed(factory) => factory(resumers),
+        }
     }
 }
 

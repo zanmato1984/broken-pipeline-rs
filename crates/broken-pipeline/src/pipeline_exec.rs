@@ -189,7 +189,7 @@ impl<T: PipelineTypes> ExecState<T> {
             .collect::<Vec<_>>();
 
         let task_locals = (0..dop)
-            .map(|_| Mutex::new(ExecTaskLocal::new(channel_runtimes.len())))
+            .map(|_| Mutex::new(ExecTaskLocal::new(&channel_runtimes)))
             .collect::<Vec<_>>();
 
         Self {
@@ -201,24 +201,37 @@ impl<T: PipelineTypes> ExecState<T> {
     }
 
     fn step(&self, ctx: &TaskContext<T>, task_id: TaskId) -> BpResult<TaskStatus, T> {
-        self.assert_not_poisoned();
         // Lock only this logical task, never all callbacks in the executor.
-        // Acquire the lock even after cancellation to retain poison fail-fast.
-        let mut local = self.task_locals[task_id]
-            .lock()
-            .expect("pipe exec mutex poisoned");
+        // A parked task must install cleanup before observing fatal poison.
+        // Never wait for an occupied task once poison is already visible: its
+        // active entry owns cleanup, and reentry must still fail fast.
+        let mut local = if self.poisoned.load(Ordering::Acquire) {
+            self.task_locals[task_id]
+                .try_lock()
+                .expect("pipe exec mutex poisoned")
+        } else {
+            self.task_locals[task_id]
+                .lock()
+                .expect("pipe exec mutex poisoned")
+        };
         let _panic_guard = CancelOnPanic {
             cancelled: &self.cancelled,
             poisoned: &self.poisoned,
         };
+        let cleanup = StepCleanup {
+            local: &mut local,
+            cancelled: &self.cancelled,
+        };
         self.assert_not_poisoned();
-        let result = local.step(ctx, task_id, &self.channels, &self.cancelled);
+        let result = cleanup
+            .local
+            .step(ctx, task_id, &self.channels, &self.cancelled);
         self.assert_not_poisoned();
         if result.is_err() {
             self.cancelled.store(true, Ordering::Release);
         }
         if self.cancelled.load(Ordering::Acquire) {
-            local.resumers.fill(None);
+            cleanup.local.resumers.fill(None);
             if result.is_ok() {
                 return Ok(TaskStatus::Cancelled);
             }
@@ -231,6 +244,25 @@ impl<T: PipelineTypes> ExecState<T> {
             !self.poisoned.load(Ordering::Acquire),
             "pipe exec mutex poisoned"
         );
+    }
+}
+
+// Clear temporary handles on every exit, including a factory/callback unwind.
+// Persistent continuation state is discarded only on fatal cancellation/unwind.
+struct StepCleanup<'a> {
+    local: &'a mut ExecTaskLocal,
+    cancelled: &'a AtomicBool,
+}
+
+impl Drop for StepCleanup<'_> {
+    fn drop(&mut self) {
+        self.local.blocked_resumers.clear();
+        if self.cancelled.load(Ordering::Acquire) || std::thread::panicking() {
+            self.local.resumers.fill(None);
+            for channel in &mut self.local.channels {
+                channel.pipe_stack.clear();
+            }
+        }
     }
 }
 
@@ -265,7 +297,6 @@ impl ExecTaskLocal {
 
         let mut all_finished = true;
         let mut all_unfinished_blocked = true;
-        let mut blocked_resumers = Vec::new();
         let mut last_outcome = LastOutcome::Continue;
 
         for (channel_id, channel) in channels.iter().enumerate() {
@@ -280,7 +311,8 @@ impl ExecTaskLocal {
                 if resumer.is_resumed() {
                     self.resumers[channel_id] = None;
                 } else {
-                    blocked_resumers.push(Arc::clone(resumer));
+                    assert!(self.blocked_resumers.len() < channels.len());
+                    self.blocked_resumers.push(Arc::clone(resumer));
                     all_finished = false;
                     continue;
                 }
@@ -307,7 +339,8 @@ impl ExecTaskLocal {
 
             if let OpOutput::Blocked(resumer) = &out {
                 self.resumers[channel_id] = Some(Arc::clone(resumer));
-                blocked_resumers.push(Arc::clone(resumer));
+                assert!(self.blocked_resumers.len() < channels.len());
+                self.blocked_resumers.push(Arc::clone(resumer));
             } else {
                 all_unfinished_blocked = false;
             }
@@ -329,11 +362,11 @@ impl ExecTaskLocal {
             return Ok(TaskStatus::Finished);
         }
 
-        if all_unfinished_blocked && !blocked_resumers.is_empty() {
+        if all_unfinished_blocked && !self.blocked_resumers.is_empty() {
             if cancelled.load(Ordering::Acquire) {
                 return Ok(TaskStatus::Cancelled);
             }
-            let awaiter = ctx.make_awaiter(blocked_resumers)?;
+            let awaiter = ctx.make_awaiter_from_slice(&self.blocked_resumers)?;
             return Ok(TaskStatus::Blocked(awaiter));
         }
 
@@ -358,16 +391,20 @@ struct ExecTaskLocal {
     finished: Vec<bool>,
     resumers: Vec<Option<SharedResumer>>,
     channels: Vec<ChannelTaskLocal>,
+    blocked_resumers: Vec<SharedResumer>,
 }
 
 impl ExecTaskLocal {
-    fn new(num_channels: usize) -> Self {
+    fn new<T: PipelineTypes>(channels: &[ChannelRuntime<T>]) -> Self {
+        let num_channels = channels.len();
         Self {
             finished: vec![false; num_channels],
             resumers: vec![None; num_channels],
-            channels: (0..num_channels)
-                .map(|_| ChannelTaskLocal::default())
+            channels: channels
+                .iter()
+                .map(|channel| ChannelTaskLocal::new(channel.pipes.len()))
                 .collect(),
+            blocked_resumers: Vec::with_capacity(num_channels),
         }
     }
 }
@@ -490,24 +527,24 @@ impl<T: PipelineTypes> ChannelRuntime<T> {
                 if !matches!(out, OpOutput::PipeYieldBack) {
                     panic!("pipe yield handshake must resume with PIPE_YIELD_BACK");
                 }
-                local.pipe_stack.push(index);
+                local.push_pipe(index, self.pipes.len());
                 local.yielded = false;
                 return Ok(OpOutput::PipeYieldBack);
             }
             match out {
                 OpOutput::PipeYield => {
-                    local.pipe_stack.push(index);
+                    local.push_pipe(index, self.pipes.len());
                     local.yielded = true;
                     return Ok(OpOutput::PipeYield);
                 }
                 OpOutput::Blocked(resumer) => {
-                    local.pipe_stack.push(index);
+                    local.push_pipe(index, self.pipes.len());
                     return Ok(OpOutput::Blocked(resumer));
                 }
                 OpOutput::PipeSinkNeedsMore => return Ok(OpOutput::PipeSinkNeedsMore),
                 OpOutput::PipeEven(batch) => input = Some(batch),
                 OpOutput::SourcePipeHasMore(batch) => {
-                    local.pipe_stack.push(index);
+                    local.push_pipe(index, self.pipes.len());
                     input = Some(batch);
                 }
                 other => panic!("invalid pipe output: {}", other.label()),
@@ -566,11 +603,287 @@ impl<T: PipelineTypes> CallbackContext<'_, T> {
     }
 }
 
-#[derive(Default)]
 struct ChannelTaskLocal {
     sinking: bool,
     pipe_stack: Vec<usize>,
     source_done: bool,
     draining: usize,
     yielded: bool,
+}
+
+impl ChannelTaskLocal {
+    fn new(num_pipes: usize) -> Self {
+        Self {
+            sinking: false,
+            pipe_stack: Vec::with_capacity(num_pipes),
+            source_done: false,
+            draining: 0,
+            yielded: false,
+        }
+    }
+
+    fn push_pipe(&mut self, index: usize, num_pipes: usize) {
+        assert!(index < num_pipes, "pipe continuation out of range");
+        assert!(
+            self.pipe_stack.len() < num_pipes,
+            "pipe continuation depth exceeded"
+        );
+        assert!(
+            self.pipe_stack
+                .last()
+                .is_none_or(|previous| *previous < index),
+            "pipe continuations must be strictly increasing"
+        );
+        self.pipe_stack.push(index);
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod storage_support;
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+    use crate::{compile, Pipeline};
+    use storage_support::{
+        shared_pipe, shared_sink, shared_source, trace_log, RecordedAwaiter, ScriptOutput as O,
+        ScriptedPipe, ScriptedSink, ScriptedSource, Step, TestResumer, TestTypes,
+    };
+
+    fn layout(exec: &PipeExec<TestTypes>, task: usize) -> (usize, usize, Vec<(usize, usize)>) {
+        let local = exec.exec.task_locals[task].lock().unwrap();
+        assert!(
+            local.blocked_resumers.is_empty(),
+            "scratch retained temporary handles"
+        );
+        (
+            local.blocked_resumers.capacity(),
+            local.blocked_resumers.as_ptr() as usize,
+            local
+                .channels
+                .iter()
+                .map(|c| (c.pipe_stack.capacity(), c.pipe_stack.as_ptr() as usize))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn construction_bounds_and_backing_survive_nested_protocol() {
+        for dop in [1, 2, 4] {
+            let log = trace_log();
+            let source = shared_source(ScriptedSource::new(
+                "nested",
+                vec![vec![Step::output(O::Finished(Some(1)))]],
+                log.clone(),
+            ));
+            let parked = shared_source(ScriptedSource::new(
+                "parked",
+                vec![vec![Step::blocked(), Step::output(O::Finished(None))]],
+                log.clone(),
+            ));
+            let p0 = shared_pipe(ScriptedPipe::new(
+                "p0",
+                vec![vec![
+                    Step::output(O::SourcePipeHasMore(2)).with_expected_input(Some(1)),
+                    Step::output(O::PipeSinkNeedsMore).with_expected_null_input(),
+                ]],
+                vec![vec![
+                    Step::blocked(),
+                    Step::output(O::PipeYield),
+                    Step::output(O::PipeYieldBack),
+                    Step::output(O::SourcePipeHasMore(7)),
+                    Step::output(O::Finished(Some(10))),
+                ]],
+                None,
+                log.clone(),
+            ));
+            let p1 = shared_pipe(ScriptedPipe::new(
+                "p1",
+                vec![vec![
+                    Step::output(O::SourcePipeHasMore(3)).with_expected_input(Some(2)),
+                    Step::output(O::PipeSinkNeedsMore).with_expected_null_input(),
+                    Step::output(O::PipeEven(8)).with_expected_input(Some(7)),
+                    Step::output(O::PipeEven(11)).with_expected_input(Some(10)),
+                ]],
+                vec![],
+                None,
+                log.clone(),
+            ));
+            let p2 = shared_pipe(ScriptedPipe::new(
+                "p2",
+                vec![vec![
+                    Step::output(O::PipeYield).with_expected_input(Some(3)),
+                    Step::output(O::PipeYieldBack).with_expected_null_input(),
+                    Step::blocked().with_expected_null_input(),
+                    Step::output(O::PipeSinkNeedsMore).with_expected_null_input(),
+                    Step::output(O::PipeEven(9)).with_expected_input(Some(8)),
+                    Step::output(O::PipeEven(12)).with_expected_input(Some(11)),
+                ]],
+                vec![],
+                None,
+                log.clone(),
+            ));
+            let sink = shared_sink(ScriptedSink::new(
+                "sink",
+                vec![vec![
+                    Step::blocked().with_expected_input(Some(9)),
+                    Step::output(O::PipeSinkNeedsMore).with_expected_null_input(),
+                    Step::output(O::PipeSinkNeedsMore).with_expected_input(Some(12)),
+                ]],
+                log,
+            ));
+            let pipeline = Pipeline::new(
+                "bounds",
+                vec![
+                    PipelineChannel::with_input_id(7, parked, vec![]),
+                    PipelineChannel::with_input_id(19, source, vec![p0, p1, p2]),
+                ],
+                sink,
+            );
+            let exec = compile(&pipeline, dop).pipelinexes()[0].pipe_exec();
+            let initial: Vec<_> = (0..dop).map(|id| layout(&exec, id)).collect();
+            for (cap, _, stacks) in &initial {
+                assert_eq!(*cap, 2);
+                assert_eq!(stacks[0].0, 0);
+                assert_eq!(stacks[1].0, 3);
+            }
+            let resumer = Arc::new(TestResumer::default()) as SharedResumer;
+            let awaiter: crate::SharedAwaiter =
+                Arc::new(RecordedAwaiter::new(vec![resumer.clone()]));
+            let r = resumer.clone();
+            let ctx = TaskContext::from_shared_context_with_borrowed_awaiter(
+                Arc::new(0),
+                Arc::new(move || Ok(r.clone())),
+                Arc::new(move |_| Ok(awaiter.clone())),
+            );
+            let task = exec.task_group().task().clone();
+            let mut labels = Vec::new();
+            let mut maximum_depth = 0;
+            for _ in 0..30 {
+                let status = task.run(&ctx, 0).unwrap();
+                labels.push(status.label());
+                let local = exec.exec.task_locals[0].lock().unwrap();
+                maximum_depth = maximum_depth.max(local.channels[1].pipe_stack.len());
+                drop(local);
+                assert_eq!(layout(&exec, 0), initial[0]);
+                if status.is_blocked() {
+                    resumer.resume();
+                }
+                if status.is_finished() {
+                    break;
+                }
+            }
+            assert_eq!(maximum_depth, 3);
+            assert_eq!(
+                labels,
+                vec![
+                    "YIELD", "CONTINUE", "BLOCKED", "CONTINUE", "CONTINUE", "CONTINUE", "BLOCKED",
+                    "YIELD", "CONTINUE", "BLOCKED", "CONTINUE", "CONTINUE", "FINISHED"
+                ]
+            );
+            for (id, expected) in initial.iter().enumerate() {
+                assert_eq!(&layout(&exec, id), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn fatal_returns_preserve_backing_and_release_scratch_and_continuations() {
+        for mode in ["error", "unwind", "other-task-cancel"] {
+            let log = trace_log();
+            let parked = shared_source(ScriptedSource::new(
+                "parked",
+                vec![
+                    vec![Step::blocked()],
+                    vec![Step::error("other task failed")],
+                ],
+                log.clone(),
+            ));
+            let source = shared_source(ScriptedSource::new(
+                "batch",
+                vec![vec![Step::output(O::Finished(Some(1)))]],
+                log.clone(),
+            ));
+            let final_step = if mode == "unwind" {
+                // Invalid pipe output intentionally exercises protocol unwind.
+                Step::output(O::Finished(None)).with_expected_null_input()
+            } else {
+                Step::error("continuation failed").with_expected_null_input()
+            };
+            let pipe = shared_pipe(ScriptedPipe::new(
+                "continuation",
+                vec![vec![
+                    Step::output(O::SourcePipeHasMore(2)).with_expected_input(Some(1)),
+                    final_step,
+                ]],
+                vec![],
+                None,
+                log.clone(),
+            ));
+            let sink = shared_sink(ScriptedSink::new(
+                "sink",
+                vec![vec![
+                    Step::output(O::PipeSinkNeedsMore).with_expected_input(Some(2))
+                ]],
+                log,
+            ));
+            let pipeline = Pipeline::new(
+                "fatal-storage",
+                vec![
+                    PipelineChannel::with_input_id(7, parked, vec![]),
+                    PipelineChannel::with_input_id(19, source, vec![pipe]),
+                ],
+                sink,
+            );
+            let exec = compile(&pipeline, 2).pipelinexes()[0].pipe_exec();
+            let initial = layout(&exec, 0);
+            let signal = Arc::new(TestResumer::default()) as SharedResumer;
+            let ctx = TaskContext::from_shared_context_with_borrowed_awaiter(
+                Arc::new(0usize),
+                Arc::new(move || Ok(signal.clone())),
+                Arc::new(|_| panic!("no aggregate blocked return expected")),
+            );
+            let task = exec.task_group().task().clone();
+            assert!(task.run(&ctx, 0).unwrap().is_continue());
+            assert_eq!(layout(&exec, 0), initial);
+            assert_eq!(
+                exec.exec.task_locals[0].lock().unwrap().channels[1]
+                    .pipe_stack
+                    .len(),
+                1
+            );
+            match mode {
+                "error" => assert_eq!(task.run(&ctx, 0).unwrap_err(), "continuation failed"),
+                "unwind" => {
+                    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                        || task.run(&ctx, 0)
+                    ))
+                    .is_err())
+                }
+                _ => {
+                    assert_eq!(task.run(&ctx, 1).unwrap_err(), "other task failed");
+                    assert!(task.run(&ctx, 0).unwrap().is_cancelled());
+                }
+            }
+            // A test-only observer may inspect poisoned bytes; production never recovers this lock.
+            let local = exec.exec.task_locals[0]
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            assert!(local.blocked_resumers.is_empty());
+            assert!(local.resumers.iter().all(Option::is_none));
+            assert!(local.channels.iter().all(|c| c.pipe_stack.is_empty()));
+            let final_layout = (
+                local.blocked_resumers.capacity(),
+                local.blocked_resumers.as_ptr() as usize,
+                local
+                    .channels
+                    .iter()
+                    .map(|c| (c.pipe_stack.capacity(), c.pipe_stack.as_ptr() as usize))
+                    .collect::<Vec<_>>(),
+            );
+            assert_eq!(final_layout, initial, "storage changed on {mode}");
+            assert_eq!(exec.exec.poisoned.load(Ordering::Acquire), mode == "unwind");
+        }
+    }
 }

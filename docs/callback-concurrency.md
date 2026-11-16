@@ -60,8 +60,9 @@ on return. No poisoned state is recovered. This does not catch panics or guarant
 
 The legal source/pipe/sink/drain outputs, `None` continuation inputs,
 `PipeYield`/`PipeYieldBack` handshake and source-finished-before-drain ordering are
-unchanged. No scheduler, dependency, Arrow representation or public API changes
-are part of this patch. This work does not establish memory admission, host
+unchanged. The additive borrowed-awaiter context API and bounded task-step container
+storage are described in [step-storage.md](step-storage.md). No scheduler,
+dependency or Arrow representation changes are part of this work. This work does not establish memory admission, host
 pool bounds, performance targets, complete adapter cancellation or an owner gate.
 
 ## Verification
@@ -77,3 +78,15 @@ finishing after a fatal error without downstream publication. The identical
 source-overlap test also runs against the pinned original serialized executor
 as a controlled failing negative control. Raw commands/results are retained in
 the task report; this document alone is not a claim that checks have passed.
+
+## Task-local scratch ownership
+
+Each logical task also owns reusable blocked-resumer scratch, reserved for its
+channel count, and each channel stack is reserved for its pipe count at
+`pipe_exec()` construction. The task mutex protects both. Borrowed awaiter
+factories observe scratch only during their call; no scratch reference crosses
+a task return or enters the static awaiter result. An unwind-safe cleanup guard
+clears temporary strong handles on every return and unwind. Persistent parked
+handles remain necessary for resume; cancellation cleanup retains the existing
+cooperative task-observation boundary. See the storage document for the source
+bound proof, legacy allocating conversion, and memory-control exclusions.

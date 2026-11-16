@@ -44,8 +44,12 @@ impl ConditionalAwaiter {
                     expected: "CallbackResumer",
                 },
             )?;
-            let awaiter_clone = Arc::clone(&awaiter);
-            callback_resumer.add_callback(move || awaiter_clone.notify_ready());
+            let awaiter_weak = Arc::downgrade(&awaiter);
+            callback_resumer.add_callback(move || {
+                if let Some(awaiter) = awaiter_weak.upgrade() {
+                    awaiter.notify_ready();
+                }
+            });
         }
 
         Ok(awaiter)
